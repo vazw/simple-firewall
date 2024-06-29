@@ -1,2 +1,2 @@
 [alias]
-xtask = "run --package xtask --"
+sfw = "run --package sfw --"

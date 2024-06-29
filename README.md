@@ -11,7 +11,7 @@
 ## Build eBPF
 
 ```bash
-cargo xtask build-ebpf
+cargo sfw build-ebpf
 ```
 
 ## Build Userspace
@@ -23,19 +23,13 @@ cargo build
 ## Build eBPF and Userspace
 
 ```bash
-cargo xtask build
+cargo sfw build
 ```
 
 ## Run
 
 ```bash
-RUST_LOG=info cargo xtask run -i <NIC> -c <path-to-config.yaml>
-```
-
-sure kernel app must run as `root`
-
-```bash
-RUST_LOG=info sudo -E cargo xtask run -i <NIC> -c <path-to-config.yaml>
+RUST_LOG=info cargo sfw run -i <NIC> -c <path-to-config.yaml>
 ```
 
 To perform a release build you can use the `--release` flag.
@@ -71,4 +65,19 @@ these options can be nested likes example below except `dns` which we will provi
   "208.67.222.222": "dns", #// DNS
   "9.9.9.9": "dns", #// DNS
 }
+```
+
+## Installation
+
+I'll try to add install script later.
+
+if you wanted install them on your system try copy `targat/release/simple-firewall` into `/usr/bin/`
+and copy `fwcfg.yaml` to `/etc/fwcfg.yaml` or any where you want, then make a auto-startup script for it with `simple-firewall -i <NIC> -c <path-to-config.yaml>`
+
+in my case I was using `pkexec` to auto-startup with my SwayWM started
+
+`.config/sway/config`
+
+```bash
+exec pkexec simple-firewall -i wlp1s0 -c /etc/fwcfg.yaml &
 ```
