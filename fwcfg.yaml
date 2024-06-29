@@ -1,0 +1,14 @@
+{
+  "80": "i,tcp",
+  "8181": "i,tcp",
+  "443": "i,tcp",
+  "123": "i,udp", # sync time
+  "67": "i,udp", # router
+  # "5353": "o,udp", # dns multi-cast
+  "22000": "i,o,tcp,udp", #syncthing
+  "10022": "i,o,tcp", #// syncthing
+  "21027": "i,o,udp", #// syncthing
+  "4869": "i,o,tcp", #// nostr relay
+  "208.67.222.222": "dns", #// DNS
+  "9.9.9.9": "dns", #// DNS
+}
