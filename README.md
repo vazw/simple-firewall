@@ -1,4 +1,4 @@
-# simple-firewall
+# simple-firewall a simple kernel level firewall
 
 ## Simeple - Low Memory-Footprint and Reliable.
 
