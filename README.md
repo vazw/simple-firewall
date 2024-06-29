@@ -78,6 +78,7 @@ these options can be nested likes example below except `dns` which we will provi
 
 ```bash
 git clone https://github.com/vazw/simple-firewall.git && cd simple-firewall
+cargo install bpf-linker
 cargo sfw install --path <install-path> # Default is /usr/bin/
 ```
 
