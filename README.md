@@ -32,6 +32,12 @@ cargo xtask build
 RUST_LOG=info cargo xtask run -i <NIC> -c <path-to-config.yaml>
 ```
 
+sure kernel app must run as `root`
+
+```bash
+RUST_LOG=info sudo -E cargo xtask run -i <NIC> -c <path-to-config.yaml>
+```
+
 To perform a release build you can use the `--release` flag.
 You may also change the target architecture with the `--target` flag.
 
@@ -41,12 +47,12 @@ simple-firewall use simple yaml config pattern
 
 ### config options
 
-- `i` Imcomming-Port a port from outside server comming to us.(etc. web-browsing)
+- `i` Incomming-Port a port from outside server comming to us.(etc. web-browsing)
 - `o` Outgoing-Port a port from our server to outside.(etc. serving website/service)
 - `tcp` Allowed on TCP protocal
 - `udp` Allowed on UDP protocal
 
-these options can be nested likes example below except `dns` which we will provide only allowed DNS reslover.
+these options can be nested likes example below except `dns` which we will provide only allowed DNS reslover IP address.
 
 `fwcfg.yaml`
 
