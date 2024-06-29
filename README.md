@@ -8,6 +8,13 @@
 
 1. Install bpf-linker: `cargo install bpf-linker`
 
+## Features
+
+1. Blazingly fast
+2. Filter TCP and UDP with specified PORT
+3. Specified DNS reslover
+4. Rate limit 1,000 request per seconds
+
 ## Build eBPF
 
 ```bash
