@@ -77,6 +77,7 @@ these options can be nested likes example below except `dns` which we will provi
 ## Installation
 
 ```bash
+git clone https://github.com/vazw/simple-firewall.git && cd simple-firewall
 cargo sfw install --path <install-path> # Default is /usr/bin/
 ```
 
