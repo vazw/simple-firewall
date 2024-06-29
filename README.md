@@ -76,9 +76,10 @@ these options can be nested likes example below except `dns` which we will provi
 
 ## Installation
 
-I'll try to add install script later.
+```bash
+cargo sfw install --path <install-path> # Default is /usr/bin/
+```
 
-if you wanted install them on your system try copy `targat/release/simple-firewall` into `/usr/bin/`
 and copy `fwcfg.yaml` to `/etc/fwcfg.yaml` or any where you want, then make a auto-startup script for it with `simple-firewall -i <NIC> -c <path-to-config.yaml>`
 
 in my case I was using `pkexec` to auto-startup with my SwayWM started

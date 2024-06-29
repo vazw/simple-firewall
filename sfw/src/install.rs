@@ -55,5 +55,34 @@ pub fn run(opts: Options) -> Result<(), anyhow::Error> {
     if !status.success() {
         anyhow::bail!("Failed to run `{}`", args.join(" "));
     }
+    println!("Installed simple-firewall on `{}`", install_path);
+    // copy config
+    let mut args: Vec<_> = "sudo cp".trim().split_terminator(' ').collect();
+    args.push("fwcfg.yaml");
+    args.push("/etc/fwcfg.yaml");
+
+    // run the command
+    let status = Command::new(args.first().expect("No first argument"))
+        .args(args.iter().skip(1))
+        .status()
+        .expect("failed to run the command");
+
+    if !status.success() {
+        anyhow::bail!("Failed to copy config file `{}`", args.join(" "));
+    }
+    println!("Installed config on `/etc/fwcfg.yaml`");
+    println!(
+        r"
+then make a auto-startup script for it with `sfw -i <NIC> -c <path-to-config.yaml>`
+
+in my case I was using `pkexec` to auto-startup with my SwayWM started
+
+`.config/sway/config`
+
+```bash
+exec pkexec sfw -i wlp1s0 -c /etc/fwcfg.yaml &
+```
+    "
+    );
     Ok(())
 }
