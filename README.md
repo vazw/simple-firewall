@@ -80,12 +80,12 @@ these options can be nested likes example below except `dns` which we will provi
 cargo sfw install --path <install-path> # Default is /usr/bin/
 ```
 
-and copy `fwcfg.yaml` to `/etc/fwcfg.yaml` or any where you want, then make a auto-startup script for it with `simple-firewall -i <NIC> -c <path-to-config.yaml>`
+then make a auto-startup script for it with `sfw -i <NIC> -c <path-to-config.yaml>`
 
 in my case I was using `pkexec` to auto-startup with my SwayWM started
 
 `.config/sway/config`
 
 ```bash
-exec pkexec simple-firewall -i wlp1s0 -c /etc/fwcfg.yaml &
+exec pkexec sfw -i wlp1s0 -c /etc/fwcfg.yaml &
 ```
