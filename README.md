@@ -1,8 +1,8 @@
 # simple-firewall
 
-![ScreenShot](https://github.com/vazw/simple-firewall/blob/main/screenshot/screenshot.png)
+## Simeple - Low Memory-Footprint and Reliable.
 
-Simeple - Low Memory-Footprint and Reliable.
+![ScreenShot](https://github.com/vazw/simple-firewall/blob/main/screenshot/screenshot.png)
 
 ## Prerequisites
 
