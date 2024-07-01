@@ -3,7 +3,10 @@ use std::process::Command;
 use anyhow::Context as _;
 use clap::Parser;
 
-use crate::{build::{build, Options as BuildOptions}, build_ebpf::Architecture};
+use crate::{
+    build::{build, Options as BuildOptions},
+    build_ebpf::Architecture,
+};
 
 #[derive(Debug, Parser)]
 pub struct Options {
@@ -21,18 +24,18 @@ pub struct Options {
     pub run_args: Vec<String>,
 }
 
-
 /// Build and run the project
 pub fn run(opts: Options) -> Result<(), anyhow::Error> {
     // Build our ebpf program and the project
-    build(BuildOptions{
+    build(BuildOptions {
         bpf_target: opts.bpf_target,
         release: opts.release,
-    }).context("Error while building project")?;
-    
+    })
+    .context("Error while building project")?;
+
     // profile we are building (release or debug)
     let profile = if opts.release { "release" } else { "debug" };
-    let bin_path = format!("target/{profile}/simple-firewall");
+    let bin_path = format!("target/{profile}/sfw");
 
     // arguments to pass to the application
     let mut run_args: Vec<_> = opts.run_args.iter().map(String::as_str).collect();
