@@ -10,7 +10,7 @@ simple-firewall-common = { path = "../simple-firewall-common" }
 network-types = "0.0.6"
 
 [[bin]]
-name = "simple-firewall"
+name = "sfw"
 path = "src/main.rs"
 
 [profile.dev]

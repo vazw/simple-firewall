@@ -1,2 +1,2 @@
 [alias]
-sfw = "run --package sfw --"
+sfw = "run --package cargo-sfw --"
