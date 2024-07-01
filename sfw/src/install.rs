@@ -34,7 +34,7 @@ pub fn run(opts: Options) -> Result<(), anyhow::Error> {
     .context("Error while building project")?;
 
     // profile we are building (release or debug)
-    let bin_path = "target/release/simple-firewall";
+    let bin_path = "target/release/sfw";
     let install_path = if opts.path.ends_with('/') {
         format!("{}sfw", opts.path)
     } else {
