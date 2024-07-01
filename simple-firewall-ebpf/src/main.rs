@@ -69,21 +69,6 @@ fn add_request(session: &Session, connection: &Connection) {
         }
     }
 }
-// fn del_request(connection: &Connection) {
-//     if unsafe { CONNECTIONS.get(connection).is_some() } {
-//         unsafe {
-//             let _ = CONNECTIONS.remove(connection);
-//         }
-//     }
-// }
-
-// fn from_host(addr: &u32) -> bool {
-//     if let Some(host_ip) = unsafe { HOST.get(0) } {
-//         addr.eq(host_ip)
-//     } else {
-//         false
-//     }
-// }
 
 fn rate_add() {
     if let Some(counter) = unsafe { RATE.get_ptr_mut(0) } {
@@ -290,8 +275,6 @@ use crate::binding::{sock, sock_common};
 
 use aya_ebpf::{helpers::bpf_probe_read_kernel, macros::kprobe, programs::ProbeContext};
 
-use self::binding::socket;
-
 const AF_INET: u16 = 2;
 const AF_INET6: u16 = 10;
 
@@ -311,6 +294,9 @@ fn try_kprobetcp(ctx: ProbeContext) -> Result<u32, i64> {
     let sk_common = unsafe { bpf_probe_read_kernel(&(*sock).__sk_common as *const sock_common)? };
     match sk_common.skc_family {
         AF_INET => {
+            // match unsafe {(*sock).sk_type} {
+            //
+            // }
             let src_ip =
                 u32::from_be(unsafe { sk_common.__bindgen_anon_1.__bindgen_anon_1.skc_rcv_saddr });
             let src_port =
@@ -319,6 +305,7 @@ fn try_kprobetcp(ctx: ProbeContext) -> Result<u32, i64> {
                 u32::from_be(unsafe { sk_common.__bindgen_anon_1.__bindgen_anon_1.skc_daddr });
             let dst_port =
                 u16::from_be(unsafe { sk_common.__bindgen_anon_3.__bindgen_anon_1.skc_dport });
+            // let type_ = unsafe { sk_common.__bindgen_anon_4.skc_bind_node };
             let connection = Connection {
                 state: 2,
                 src_ip,
@@ -329,7 +316,11 @@ fn try_kprobetcp(ctx: ProbeContext) -> Result<u32, i64> {
             };
             debug!(
                 &ctx,
-                "AF_INET {:i}:{} -> {:i}:{}", src_ip, src_port, dst_ip, dst_port
+                "AF_INET {:i}:{} -> {:i}:{}",
+                src_ip,
+                src_port,
+                dst_ip,
+                dst_port //, type_
             );
             unsafe { NEW.output(&ctx, &connection, 0) };
             Ok(0)
