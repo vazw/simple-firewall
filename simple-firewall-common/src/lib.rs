@@ -23,3 +23,12 @@ pub struct Session {
 
 #[cfg(feature = "user")]
 unsafe impl aya::Pod for Session {}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct IcmpPacket {
+    pub src_ip: u32,
+    pub dst_ip: u32,
+    pub icmp_type: u8,
+}
+#[cfg(feature = "user")]
+unsafe impl aya::Pod for IcmpPacket {}
