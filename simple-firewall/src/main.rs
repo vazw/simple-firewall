@@ -153,8 +153,7 @@ async fn main() -> Result<(), anyhow::Error> {
                         let src_ip = Ipv4Addr::from(con.src_ip);
                         let dst_ip = Ipv4Addr::from(sess.src_ip);
                         let protocal = if con.protocol == 6 {"TCP"} else {"UDP"};
-                        if connections.get(&sess,0).is_err() {
-                            if connections.insert(sess,con,0).is_ok() {
+                        if connections.insert(sess,con,0).is_ok() {
                                 if src_ip == host_addr {
                                     info!(
                                         "Bind {} HOST::{} --> {}:{}",
@@ -171,20 +170,15 @@ async fn main() -> Result<(), anyhow::Error> {
                                         "Fail Binding {} {}:{} --> {}:{}",
                                         protocal, src_ip, con.src_port, dst_ip, sess.src_port
                                     );
-                            };
-                        }
+                            }
                     }
                     let con = del_rev.try_recv();
                     if con.is_ok() {
                         let con = con.unwrap();
                         let src_ip = Ipv4Addr::from(con.src_ip);
                         let protocal = if con.protocol == 6 {"TCP"} else {"UDP"};
-                        if connections.get(&con,0).is_ok() {
-                            if connections.remove(&con).is_ok() {
-                                info!("Removed {}:{} on {}", src_ip, con.src_port, protocal);
-                            } else {
-                                info!("Fail to remove {}:{} on {}", src_ip, con.src_port, protocal);
-                            }
+                        if connections.remove(&con).is_ok() {
+                            info!("Removed {}:{} on {}", src_ip, con.src_port, protocal);
                         }
                     }
                     // let mut n = 0;
