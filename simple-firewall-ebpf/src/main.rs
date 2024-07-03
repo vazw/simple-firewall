@@ -212,8 +212,7 @@ fn try_simple_firewall(ctx: XdpContext) -> Result<u32, ()> {
                         //     tcp_hdr_ref.syn(),
                         //     tcp_hdr_ref.urg()
                         // );
-                        if (tcp_hdr_ref.rst() == 1 || tcp_hdr_ref.fin() == 1)
-                            && unsafe { CONNECTIONS.get(&session).is_some() }
+                        if tcp_hdr_ref.rst() == 1 && unsafe { CONNECTIONS.get(&session).is_some() }
                         {
                             info!(&ctx, "closing {:i}:{}", session.src_ip, session.src_port);
                             _ = unsafe { CONNECTIONS.remove(&session) };
@@ -413,7 +412,7 @@ pub fn handle_tcp_egress(ctx: TcContext) -> Result<i32, i64> {
     };
     let tcp_hdr_ref = unsafe { tcp_hdr.as_ref().ok_or(TC_ACT_OK)? };
 
-    if tcp_hdr_ref.rst() == 1 || tcp_hdr_ref.fin() == 1 {
+    if tcp_hdr_ref.rst() == 1 {
         info!(&ctx, "closing {:i}:{}", ses.src_ip, ses.src_port);
         _ = unsafe { CONNECTIONS.remove(&ses) };
     } else {
