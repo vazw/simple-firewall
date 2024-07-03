@@ -1,0 +1,1 @@
+pub const CPUS: u32 = 12;

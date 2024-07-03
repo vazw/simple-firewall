@@ -6,7 +6,7 @@ use aya::util::{nr_cpus, online_cpus};
 
 use anyhow::{Context, Ok};
 use aya::maps::{Array, AsyncPerfEventArray, HashMap, PerCpuArray, PerCpuValues};
-use aya::programs::{KProbe, Xdp, XdpFlags};
+use aya::programs::{SchedClassifier, TcAttachType, Xdp, XdpFlags};
 use aya::{include_bytes_aligned, Bpf};
 use aya_log::BpfLogger;
 use bytes::BytesMut;
@@ -17,7 +17,7 @@ use figment::{
 };
 use local_ip_address::local_ip;
 use log::{debug, info, warn};
-use simple_firewall_common::{Connection, Session};
+use simple_firewall_common::{Connection, IcmpPacket, Session};
 use tokio::signal;
 use tokio::time::{interval, Duration, Instant};
 
@@ -61,9 +61,11 @@ async fn main() -> Result<(), anyhow::Error> {
         // This can happen if you remove all log statements from your eBPF program.
         warn!("failed to initialize eBPF logger: {}", e);
     }
-    let program: &mut KProbe = bpf.program_mut("kprobetcp").unwrap().try_into()?;
-    program.load()?;
-    program.attach("tcp_connect", 0)?;
+    let egress_program: &mut SchedClassifier = bpf.program_mut("sfw_egress").unwrap().try_into()?;
+    egress_program.load()?;
+    egress_program
+        .attach(&opt.iface, TcAttachType::Egress)
+        .with_context(|| "failed to attach the egress TC program")?;
 
     let mut config_len: usize;
     let config = Figment::new().merge(Yaml::file(&opt.config));
@@ -115,42 +117,80 @@ async fn main() -> Result<(), anyhow::Error> {
             Ok::<_>(())
         });
     }
+    let mut icmp_array = AsyncPerfEventArray::try_from(bpf.take_map("ICMP_EVENTS").unwrap())?;
+    for cpu_id in online_cpus()? {
+        // let del_send = del_send.clone();
+        // let add_send = add_send.clone();
+        let mut perf_buf = icmp_array.open(cpu_id, None)?;
+        tokio::task::spawn(async move {
+            let mut buf = vec![BytesMut::with_capacity(1024); 10];
+            loop {
+                let events = perf_buf.read_events(&mut buf).await?;
+                for event in buf.iter_mut().take(events.read) {
+                    let key = unsafe { &*(event.as_ptr() as *const IcmpPacket) };
+                    let src_ip = Ipv4Addr::from(key.src_ip);
+                    let dst_ip = Ipv4Addr::from(key.dst_ip);
+                    println!("ICMP packet captured: {} -> {}", src_ip, dst_ip);
+                }
+            }
+
+            Ok::<_>(())
+        });
+    }
     _ = tokio::task::spawn(async move {
         let mut interval_1 = interval(Duration::from_millis(10));
         let mut interval_2 = interval(Duration::from_millis(10));
         let mut heart_rate = interval(Duration::from_secs(1));
         let mut heart_reset: bool = false;
+        let mut connections: HashMap<_, Session, Connection> =
+            HashMap::try_from(bpf.take_map("CONS").unwrap())?;
         loop {
             tokio::select! {
                 _ = interval_1.tick() => {
-                    let mut connections: HashMap<_, Session, Connection> = HashMap::try_from(bpf.map_mut("CONS").unwrap())?;
                     let con = add_rev.try_recv();
                     if con.is_ok() {
                         let (sess, con) = con.unwrap();
                         let src_ip = Ipv4Addr::from(con.src_ip);
                         let dst_ip = Ipv4Addr::from(sess.src_ip);
                         let protocal = if con.protocol == 6 {"TCP"} else {"UDP"};
-                        if src_ip == host_addr {
-                            info!(
-                                "Bind {} HOST::{} --> {}:{}",
-                                protocal, con.src_port, dst_ip, con.dst_port
-                            );
-                        } else {
-                            info!(
-                                "Bind {} {}:{} --> {}:{}",
-                                protocal, src_ip, con.src_port, dst_ip, con.dst_port
-                            );
-                        }
-                        connections.insert(sess,con,0)?;
+                        if connections.insert(sess,con,0).is_ok() {
+                                if src_ip == host_addr {
+                                    info!(
+                                        "Bind {} HOST::{} --> {}:{}",
+                                        protocal, con.src_port, dst_ip, sess.src_port
+                                    );
+                                } else {
+                                    info!(
+                                        "Bind {} {}:{} --> {}:{}",
+                                        protocal, src_ip, con.src_port, dst_ip, sess.src_port
+                                    );
+                                }
+                            } else {
+                                    info!(
+                                        "Fail Binding {} {}:{} --> {}:{}",
+                                        protocal, src_ip, con.src_port, dst_ip, sess.src_port
+                                    );
+                            }
                     }
                     let con = del_rev.try_recv();
                     if con.is_ok() {
                         let con = con.unwrap();
                         let src_ip = Ipv4Addr::from(con.src_ip);
                         let protocal = if con.protocol == 6 {"TCP"} else {"UDP"};
-                        info!("Removing {}:{} on {}", src_ip, con.src_port, protocal);
-                        connections.remove(&con)?;
+                        if connections.remove(&con).is_ok() {
+                            info!("Removed {}:{} on {}", src_ip, con.src_port, protocal);
+                        }
                     }
+                    // let mut n = 0;
+                    // let cons = connections.keys();
+                    // for con in cons {
+                    //     if con.is_ok() {
+                    //         n +=1
+                    //     };
+                    // }
+                    // println!("Sessions {}", n);
+
+
                 }
                 _ = interval_2.tick() => {
                     let new_config: std::collections::HashMap<String, String> = Figment::new().merge(Yaml::file(&opt.config)).extract()?;
@@ -166,16 +206,6 @@ async fn main() -> Result<(), anyhow::Error> {
                         rate_limit.set(0,PerCpuValues::try_from(vec![0u32;nr_cpus()?])?,0)?;
                         heart_reset = false;
                     }
-
-                    // let cons = connections.keys();
-                    // for con in cons {
-                    //     let con = if con.is_err() {
-                    //         break;
-                    //     } else {con.unwrap()};
-                    //     let src_ip = Ipv4Addr::from(con.src_ip);
-                    //     let protocal = if con.protocol == 6 {"TCP"} else {"UDP"};
-                    //     println!("Sessions {}:{} -> {}", src_ip, con.src_port, protocal);
-                    // }
 
                 }
                 _ = heart_rate.tick() => {
