@@ -199,6 +199,19 @@ fn try_simple_firewall(ctx: XdpContext) -> Result<u32, ()> {
                     };
 
                     if let Some(tcp_hdr_ref) = unsafe { header.as_ref() } {
+                        // info!(&ctx, "con {:i}:{}", connection.src_ip, connection.src_port);
+                        // info!(
+                        //     &ctx,
+                        //     "ack {}| cwr {}| ece {}| fin {}| psh {}| rst {}| syn {}| urg{}",
+                        //     tcp_hdr_ref.ack(),
+                        //     tcp_hdr_ref.cwr(),
+                        //     tcp_hdr_ref.ece(),
+                        //     tcp_hdr_ref.fin(),
+                        //     tcp_hdr_ref.psh(),
+                        //     tcp_hdr_ref.rst(),
+                        //     tcp_hdr_ref.syn(),
+                        //     tcp_hdr_ref.urg()
+                        // );
                         if (tcp_hdr_ref.rst() == 1 || tcp_hdr_ref.fin() == 1)
                             && unsafe { CONNECTIONS.get(&session).is_some() }
                         {
