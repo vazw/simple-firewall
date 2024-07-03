@@ -153,24 +153,18 @@ async fn main() -> Result<(), anyhow::Error> {
                         let src_ip = Ipv4Addr::from(con.src_ip);
                         let dst_ip = Ipv4Addr::from(sess.src_ip);
                         let protocal = if con.protocol == 6 {"TCP"} else {"UDP"};
-                        if connections.insert(sess,con,0).is_ok() {
-                                if src_ip == host_addr {
-                                    info!(
-                                        "Bind {} HOST::{} --> {}:{}",
-                                        protocal, con.src_port, dst_ip, sess.src_port
-                                    );
-                                } else {
-                                    info!(
-                                        "Bind {} {}:{} --> {}:{}",
-                                        protocal, src_ip, con.src_port, dst_ip, sess.src_port
-                                    );
-                                }
-                            } else {
-                                    info!(
-                                        "Fail Binding {} {}:{} --> {}:{}",
-                                        protocal, src_ip, con.src_port, dst_ip, sess.src_port
-                                    );
-                            }
+                        if connections.get(&sess,0).is_err() && connections.insert(sess,con,0).is_ok() {
+                            info!(
+                                "Bind {} {}:{} --> {}:{}",
+                                protocal, src_ip, con.src_port, dst_ip, sess.src_port
+                            );
+                        }
+                            // } else {
+                            //         info!(
+                            //             "Fail Binding {} {}:{} --> {}:{}",
+                            //             protocal, src_ip, con.src_port, dst_ip, sess.src_port
+                            //         );
+                            // };
                     }
                     let con = del_rev.try_recv();
                     if con.is_ok() {
