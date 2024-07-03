@@ -84,7 +84,7 @@ async fn main() -> Result<(), anyhow::Error> {
         let add_send = add_send.clone();
         let mut perf_buf = perf_array.open(cpu_id, None)?;
         tokio::task::spawn(async move {
-            let mut u_connection: std::collections::HashMap<Connection, Instant> =
+            let mut u_connection: std::collections::HashMap<Session, Instant> =
                 std::collections::HashMap::new();
             let mut buf = vec![BytesMut::with_capacity(1024); 10];
             loop {
@@ -97,18 +97,13 @@ async fn main() -> Result<(), anyhow::Error> {
                         protocol: 6,
                     };
                     add_send.send((sess, *key)).await?;
-                    u_connection.insert(*key, Instant::now());
+                    u_connection.insert(sess, Instant::now());
                 }
                 for k in u_connection.clone().keys() {
                     if let Some(v) = u_connection.get(k) {
-                        if v.elapsed().as_secs() == 60 {
+                        if v.elapsed().as_secs() == 180 {
                             _ = u_connection.remove(k);
-                            let sess = Session {
-                                src_ip: k.dst_ip,
-                                src_port: k.dst_port,
-                                protocol: 6,
-                            };
-                            del_send.send(sess).await?;
+                            del_send.send(*k).await?;
                         }
                     }
                 }
