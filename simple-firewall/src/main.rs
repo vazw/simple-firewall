@@ -166,30 +166,38 @@ async fn main() -> Result<(), anyhow::Error> {
                         let con = con.unwrap();
                         let src_ip = Ipv4Addr::from(con.src_ip);
                         let protocal = if con.protocol == 6 {"TCP"} else {"UDP"};
-                        if connections.remove(&con).is_ok() {
-                            info!("Removed {}:{} on {}", src_ip, con.src_port, protocal);
+                        // Check if connections still exits
+                        if connections.get(&con, 0).is_ok()
+                            && connections.remove(&con).is_ok() {
+                            info!("Closing {}:{} on {}", src_ip, con.src_port, protocal);
+                        } else {
+                        // The connections maybe removed by `rst` signal
+                            let mut n = 0;
+                            let cons = connections.keys();
+                            for con in cons { if con.is_ok() { n +=1 }; }
+                            info!(
+                                "Closed {}:{} on {} total connections: {}",
+                                src_ip,
+                                con.src_port,
+                                protocal, n
+                            );
                         }
                     }
-                    // let mut n = 0;
-                    // let cons = connections.keys();
-                    // for con in cons {
-                    //     if con.is_ok() {
-                    //         n +=1
-                    //     };
-                    // }
-                    // println!("Sessions {}", n);
 
 
                 }
                 _ = interval_2.tick() => {
-                    let new_config: std::collections::HashMap<String, String> = Figment::new().merge(Yaml::file(&opt.config)).extract()?;
+                    let new_config: std::collections::HashMap<String, String>
+                        = Figment::new().merge(Yaml::file(&opt.config)).extract()?;
                     if new_config.len() != config_len {
                         _ = load_config(&mut bpf, &opt, &new_config, &host_addr);
                         config_len = new_config.len();
                     };
 
                     if heart_reset {
-                        let mut rate_limit: PerCpuArray<_, u32>= PerCpuArray::try_from(bpf.map_mut("RATE").unwrap())?;
+                        let mut rate_limit: PerCpuArray<_, u32>
+                            = PerCpuArray::try_from(bpf.map_mut("RATE")
+                                .expect("get map RATE"))?;
                         // let rate = rate_limit.get(&0u32,0);
                         // println!("1s {:?}", rate.unwrap().iter().sum::<u32>());
                         rate_limit.set(0,PerCpuValues::try_from(vec![0u32;nr_cpus()?])?,0)?;
