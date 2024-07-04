@@ -214,8 +214,17 @@ fn try_simple_firewall(ctx: XdpContext) -> Result<u32, u32> {
                         // );
                         if tcp_hdr_ref.rst() == 1 && unsafe { CONNECTIONS.get(&session).is_some() }
                         {
-                            info!(&ctx, "closing {:i}:{}", session.src_ip, session.src_port);
-                            _ = unsafe { CONNECTIONS.remove(&session) };
+                            unsafe {
+                                if CONNECTIONS.get(&session).is_some() {
+                                    info!(
+                                        &ctx,
+                                        "Closing {:i}:{} on TCP", session.src_ip, session.src_port
+                                    );
+                                    _ = CONNECTIONS.remove(&session);
+                                }
+                            }
+                            //let it pass
+                            return Ok(xdp_action::XDP_PASS);
                         }
                     };
 
