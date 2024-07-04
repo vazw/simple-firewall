@@ -48,12 +48,12 @@ static mut HOST: Array<u32> = Array::with_max_entries(1, 0);
 static mut CONNECTIONS: HashMap<Session, Connection> = HashMap::with_max_entries(512, 0);
 
 #[inline(always)]
-fn ptr_at<T>(ctx: &XdpContext, offset: usize) -> Result<*const T, ()> {
+fn ptr_at<T>(ctx: &XdpContext, offset: usize) -> Result<*const T, u32> {
     let start = ctx.data();
     let end = ctx.data_end();
     let len = mem::size_of::<T>();
     if start + offset + len > end {
-        return Err(());
+        return Err(xdp_action::XDP_PASS);
     }
     Ok((start + offset) as *const T)
 }
@@ -138,11 +138,11 @@ const ICMP_TIME_EXCEEDED: u8 = 11;
 pub fn sfw(ctx: XdpContext) -> u32 {
     match try_simple_firewall(ctx) {
         Ok(ret) => ret,
-        Err(_) => xdp_action::XDP_ABORTED,
+        Err(e) => e,
     }
 }
 
-fn try_simple_firewall(ctx: XdpContext) -> Result<u32, ()> {
+fn try_simple_firewall(ctx: XdpContext) -> Result<u32, u32> {
     let ethhdr: *const EthHdr = ptr_at(&ctx, 0)?; //
     match unsafe { (*ethhdr).ether_type } {
         EtherType::Ipv4 => {
