@@ -213,7 +213,8 @@ fn try_simple_firewall(ctx: XdpContext) -> Result<u32, u32> {
                         //     tcp_hdr_ref.urg()
                         // );
                         if tcp_hdr_ref.rst() == 1 {
-                            if unsafe { CONNECTIONS.get(&session).is_some() } {
+                            let if_connected = unsafe { CONNECTIONS.get(&session) };
+                            if if_connected.is_some() {
                                 info!(
                                     &ctx,
                                     "Closing {:i}:{} on TCP", session.src_ip, session.src_port
@@ -417,8 +418,9 @@ pub fn handle_tcp_egress(ctx: TcContext) -> Result<i32, i32> {
         protocol: 6,
     };
     let tcp_hdr_ref = unsafe { tcp_hdr.as_ref().ok_or(TC_ACT_PIPE)? };
-    if unsafe { CONNECTIONS.get(&ses).is_some() } {
-        if tcp_hdr_ref.rst() == 1 {
+    if tcp_hdr_ref.rst() == 1 {
+        let if_connected = unsafe { CONNECTIONS.get(&ses) };
+        if if_connected.is_some() {
             info!(&ctx, "Closing {:i}:{} on TCP", ses.src_ip, ses.src_port);
         }
         Ok(TC_ACT_PIPE)
