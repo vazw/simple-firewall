@@ -351,7 +351,7 @@ use aya_ebpf::{
 };
 
 #[inline(always)]
-unsafe fn tc_ptr_at<T>(ctx: &TcContext, offset: usize) -> Result<*mut T, i64> {
+unsafe fn ptr_mut<T>(ctx: &TcContext, offset: usize) -> Result<*mut T, i64> {
     let start = ctx.data();
     let end = ctx.data_end();
     let len = mem::size_of::<T>();
@@ -374,10 +374,10 @@ pub fn sfw_egress(ctx: TcContext) -> i32 {
 }
 
 fn try_tc_egress(ctx: TcContext) -> Result<i32, i64> {
-    let eth_hdr: *const EthHdr = unsafe { tc_ptr_at(&ctx, 0) }?;
+    let eth_hdr: *const EthHdr = unsafe { ptr_mut(&ctx, 0) }?;
     match unsafe { *eth_hdr }.ether_type {
         EtherType::Ipv4 => {
-            let ipv4hdr: *const Ipv4Hdr = unsafe { tc_ptr_at(&ctx, EthHdr::LEN)? };
+            let ipv4hdr: *const Ipv4Hdr = unsafe { ptr_mut(&ctx, EthHdr::LEN)? };
             match unsafe { *ipv4hdr }.proto {
                 IpProto::Icmp => handle_icmp_egress(ctx),
                 IpProto::Tcp => handle_tcp_egress(ctx),
@@ -390,12 +390,12 @@ fn try_tc_egress(ctx: TcContext) -> Result<i32, i64> {
 
 pub fn handle_tcp_egress(ctx: TcContext) -> Result<i32, i64> {
     // gather the TCP header
-    let ip_hdr: *mut Ipv4Hdr = unsafe { tc_ptr_at(&ctx, EthHdr::LEN)? };
+    let ip_hdr: *mut Ipv4Hdr = unsafe { ptr_mut(&ctx, EthHdr::LEN)? };
     // let size = unsafe { (*ip_hdr).tot_len };
 
     let tcp_header_offset = EthHdr::LEN + Ipv4Hdr::LEN;
 
-    let tcp_hdr: *mut TcpHdr = unsafe { tc_ptr_at(&ctx, tcp_header_offset)? };
+    let tcp_hdr: *mut TcpHdr = unsafe { ptr_mut(&ctx, tcp_header_offset)? };
 
     let src_ip = u32::from_be(unsafe { (*ip_hdr).src_addr });
     let src_port = u16::from_be(unsafe { (*tcp_hdr).source });
@@ -421,9 +421,10 @@ pub fn handle_tcp_egress(ctx: TcContext) -> Result<i32, i64> {
     };
     let tcp_hdr_ref = unsafe { tcp_hdr.as_ref().ok_or(TC_ACT_OK)? };
 
-    if tcp_hdr_ref.rst() == 1 {
-        info!(&ctx, "closing {:i}:{}", ses.src_ip, ses.src_port);
-        _ = unsafe { CONNECTIONS.remove(&ses) };
+    if tcp_hdr_ref.rst() == 1 && unsafe { CONNECTIONS.get(&ses).is_some() } {
+        if unsafe { CONNECTIONS.remove(&ses).is_ok() } {
+            info!(&ctx, "Closing {:i}:{} on TCP", ses.src_ip, ses.src_port);
+        }
     } else {
         unsafe { NEW.output(&ctx, &connection, 0) };
     }
@@ -432,11 +433,11 @@ pub fn handle_tcp_egress(ctx: TcContext) -> Result<i32, i64> {
 }
 
 pub fn handle_icmp_egress(ctx: TcContext) -> Result<i32, i64> {
-    let ip_hdr: *mut Ipv4Hdr = unsafe { tc_ptr_at(&ctx, EthHdr::LEN)? };
+    let ip_hdr: *mut Ipv4Hdr = unsafe { ptr_mut(&ctx, EthHdr::LEN)? };
 
     let icmp_header_offset = EthHdr::LEN + Ipv4Hdr::LEN;
 
-    let icmp_hdr: *mut IcmpHdr = unsafe { tc_ptr_at(&ctx, icmp_header_offset)? };
+    let icmp_hdr: *mut IcmpHdr = unsafe { ptr_mut(&ctx, icmp_header_offset)? };
     let icmp_type: u8 = unsafe { (*icmp_hdr).type_ };
 
     if unsafe { (*icmp_hdr).type_ } != ICMP_DEST_UNREACH {
