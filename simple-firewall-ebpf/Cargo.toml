@@ -11,6 +11,7 @@ network-types = "0.0.6"
 
 [[bin]]
 name = "sfw"
+test = false
 path = "src/main.rs"
 
 [profile.dev]
