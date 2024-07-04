@@ -345,19 +345,19 @@ fn try_simple_firewall(ctx: XdpContext) -> Result<u32, u32> {
 }
 
 use aya_ebpf::{
-    bindings::{TC_ACT_OK, TC_ACT_PIPE, TC_ACT_SHOT},
+    bindings::{TC_ACT_PIPE, TC_ACT_SHOT},
     macros::classifier,
     programs::TcContext,
 };
 
 #[inline(always)]
-unsafe fn ptr_mut<T>(ctx: &TcContext, offset: usize) -> Result<*mut T, i64> {
+unsafe fn ptr_mut<T>(ctx: &TcContext, offset: usize) -> Result<*mut T, i32> {
     let start = ctx.data();
     let end = ctx.data_end();
     let len = mem::size_of::<T>();
 
     if start + offset + len > end {
-        return Err(TC_ACT_OK.into());
+        return Err(TC_ACT_SHOT);
     }
     Ok((start + offset) as *mut T)
 }
@@ -369,15 +369,15 @@ static mut NEW: PerfEventArray<Connection> = PerfEventArray::with_max_entries(10
 pub fn sfw_egress(ctx: TcContext) -> i32 {
     match try_tc_egress(ctx) {
         Ok(ret) => ret,
-        Err(_) => TC_ACT_SHOT,
+        Err(e) => e,
     }
 }
 
-fn try_tc_egress(ctx: TcContext) -> Result<i32, i64> {
+fn try_tc_egress(ctx: TcContext) -> Result<i32, i32> {
     let eth_hdr: *const EthHdr = unsafe { ptr_mut(&ctx, 0) }?;
     match unsafe { *eth_hdr }.ether_type {
         EtherType::Ipv4 => {
-            let ipv4hdr: *const Ipv4Hdr = unsafe { ptr_mut(&ctx, EthHdr::LEN)? };
+            let ipv4hdr: *mut Ipv4Hdr = unsafe { ptr_mut(&ctx, EthHdr::LEN)? };
             match unsafe { *ipv4hdr }.proto {
                 IpProto::Icmp => handle_icmp_egress(ctx),
                 IpProto::Tcp => handle_tcp_egress(ctx),
@@ -388,7 +388,7 @@ fn try_tc_egress(ctx: TcContext) -> Result<i32, i64> {
     }
 }
 
-pub fn handle_tcp_egress(ctx: TcContext) -> Result<i32, i64> {
+pub fn handle_tcp_egress(ctx: TcContext) -> Result<i32, i32> {
     // gather the TCP header
     let ip_hdr: *mut Ipv4Hdr = unsafe { ptr_mut(&ctx, EthHdr::LEN)? };
     // let size = unsafe { (*ip_hdr).tot_len };
@@ -419,20 +419,21 @@ pub fn handle_tcp_egress(ctx: TcContext) -> Result<i32, i64> {
         src_port: dst_port,
         protocol: 6,
     };
-    let tcp_hdr_ref = unsafe { tcp_hdr.as_ref().ok_or(TC_ACT_OK)? };
-
-    if tcp_hdr_ref.rst() == 1 && unsafe { CONNECTIONS.get(&ses).is_some() } {
-        if unsafe { CONNECTIONS.remove(&ses).is_ok() } {
+    let tcp_hdr_ref = unsafe { tcp_hdr.as_ref().ok_or(TC_ACT_PIPE)? };
+    if unsafe { CONNECTIONS.get(&ses).is_some() } {
+        if tcp_hdr_ref.rst() == 1 && unsafe { CONNECTIONS.remove(&ses).is_ok() } {
             info!(&ctx, "Closing {:i}:{} on TCP", ses.src_ip, ses.src_port);
         }
+        Ok(TC_ACT_PIPE)
     } else {
-        unsafe { NEW.output(&ctx, &connection, 0) };
+        if unsafe { CONNECTIONS.insert(&ses, &connection, 0).is_err() } {
+            unsafe { NEW.output(&ctx, &connection, 0) };
+        }
+        Ok(TC_ACT_PIPE)
     }
-
-    Ok(TC_ACT_PIPE)
 }
 
-pub fn handle_icmp_egress(ctx: TcContext) -> Result<i32, i64> {
+pub fn handle_icmp_egress(ctx: TcContext) -> Result<i32, i32> {
     let ip_hdr: *mut Ipv4Hdr = unsafe { ptr_mut(&ctx, EthHdr::LEN)? };
 
     let icmp_header_offset = EthHdr::LEN + Ipv4Hdr::LEN;
