@@ -212,19 +212,16 @@ fn try_simple_firewall(ctx: XdpContext) -> Result<u32, u32> {
                         //     tcp_hdr_ref.syn(),
                         //     tcp_hdr_ref.urg()
                         // );
-                        if tcp_hdr_ref.rst() == 1 && unsafe { CONNECTIONS.get(&session).is_some() }
-                        {
-                            unsafe {
-                                if CONNECTIONS.get(&session).is_some() {
-                                    info!(
-                                        &ctx,
-                                        "Closing {:i}:{} on TCP", session.src_ip, session.src_port
-                                    );
-                                    _ = CONNECTIONS.remove(&session);
-                                }
+                        if tcp_hdr_ref.rst() == 1 {
+                            if unsafe { CONNECTIONS.get(&session).is_some() } {
+                                info!(
+                                    &ctx,
+                                    "Closing {:i}:{} on TCP", session.src_ip, session.src_port
+                                );
+                                _ = unsafe { CONNECTIONS.remove(&session) };
+                                //let it pass
+                                return Ok(xdp_action::XDP_PASS);
                             }
-                            //let it pass
-                            return Ok(xdp_action::XDP_PASS);
                         }
                     };
 
@@ -402,7 +399,7 @@ pub fn handle_tcp_egress(ctx: TcContext) -> Result<i32, i32> {
     let dst_ip = u32::from_be(unsafe { (*ip_hdr).dst_addr });
     let dst_port = u16::from_be(unsafe { (*tcp_hdr).dest });
     // The source identifier
-    debug!(
+    info!(
         &ctx,
         "TCP request {:i}:{} -> {:i}:{}", src_ip, src_port, dst_ip, dst_port,
     );
@@ -421,14 +418,13 @@ pub fn handle_tcp_egress(ctx: TcContext) -> Result<i32, i32> {
     };
     let tcp_hdr_ref = unsafe { tcp_hdr.as_ref().ok_or(TC_ACT_PIPE)? };
     if unsafe { CONNECTIONS.get(&ses).is_some() } {
-        if tcp_hdr_ref.rst() == 1 && unsafe { CONNECTIONS.remove(&ses).is_ok() } {
+        if tcp_hdr_ref.rst() == 1 {
             info!(&ctx, "Closing {:i}:{} on TCP", ses.src_ip, ses.src_port);
         }
         Ok(TC_ACT_PIPE)
     } else {
-        if unsafe { CONNECTIONS.insert(&ses, &connection, 0).is_err() } {
-            unsafe { NEW.output(&ctx, &connection, 0) };
-        }
+        unsafe { NEW.output(&ctx, &connection, 0) };
+
         Ok(TC_ACT_PIPE)
     }
 }
