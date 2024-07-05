@@ -153,6 +153,7 @@ fn try_simple_firewall(ctx: XdpContext) -> Result<u32, u32> {
             match unsafe { (*ipv).proto } {
                 IpProto::Gre => {
                     // let header = ptr_at(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?;
+                    info!(&ctx, "GRE tunnelling🥰");
                     Ok(xdp_action::XDP_PASS)
                 }
                 IpProto::Icmp => {
@@ -215,7 +216,7 @@ fn try_simple_firewall(ctx: XdpContext) -> Result<u32, u32> {
                         if tcp_hdr_ref.rst() == 1 {
                             let if_connected = unsafe { CONNECTIONS.get(&session) };
                             if if_connected.is_some() {
-                                info!(
+                                debug!(
                                     &ctx,
                                     "Closing {:i}:{} on TCP", session.src_ip, session.src_port
                                 );
@@ -362,6 +363,8 @@ unsafe fn ptr_mut<T>(ctx: &TcContext, offset: usize) -> Result<*mut T, i32> {
 
 #[map(name = "NEW")]
 static mut NEW: PerfEventArray<Connection> = PerfEventArray::with_max_entries(1024, 0);
+#[map(name = "DEL")]
+static mut DEL: PerfEventArray<Session> = PerfEventArray::with_max_entries(1024, 0);
 
 #[classifier]
 pub fn sfw_egress(ctx: TcContext) -> i32 {
@@ -379,6 +382,7 @@ fn try_tc_egress(ctx: TcContext) -> Result<i32, i32> {
             match unsafe { *ipv4hdr }.proto {
                 IpProto::Icmp => handle_icmp_egress(ctx),
                 IpProto::Tcp => handle_tcp_egress(ctx),
+                IpProto::Udp => handle_udp_egress(ctx),
                 _ => Ok(TC_ACT_PIPE),
             }
         }
@@ -386,6 +390,31 @@ fn try_tc_egress(ctx: TcContext) -> Result<i32, i32> {
     }
 }
 
+pub fn handle_udp_egress(ctx: TcContext) -> Result<i32, i32> {
+    // gather the TCP header
+    let ip_hdr: *mut Ipv4Hdr = unsafe { ptr_mut(&ctx, EthHdr::LEN)? };
+    // let size = unsafe { (*ip_hdr).tot_len };
+
+    let udp_header_offset = EthHdr::LEN + Ipv4Hdr::LEN;
+
+    let udp_hdr: *mut UdpHdr = unsafe { ptr_mut(&ctx, udp_header_offset)? };
+
+    let src_ip = u32::from_be(unsafe { (*ip_hdr).src_addr });
+    let src_port = u16::from_be(unsafe { (*udp_hdr).source });
+    let dst_ip = u32::from_be(unsafe { (*ip_hdr).dst_addr });
+    let dst_port = u16::from_be(unsafe { (*udp_hdr).dest });
+    let connection = Connection {
+        state: 2,
+        src_ip,
+        dst_ip,
+        src_port,
+        dst_port,
+        protocol: 0x11,
+    };
+    unsafe { NEW.output(&ctx, &connection, 0) };
+    // Just forward our request outside!!
+    Ok(TC_ACT_PIPE)
+}
 pub fn handle_tcp_egress(ctx: TcContext) -> Result<i32, i32> {
     // gather the TCP header
     let ip_hdr: *mut Ipv4Hdr = unsafe { ptr_mut(&ctx, EthHdr::LEN)? };
@@ -400,7 +429,7 @@ pub fn handle_tcp_egress(ctx: TcContext) -> Result<i32, i32> {
     let dst_ip = u32::from_be(unsafe { (*ip_hdr).dst_addr });
     let dst_port = u16::from_be(unsafe { (*tcp_hdr).dest });
     // The source identifier
-    info!(
+    debug!(
         &ctx,
         "TCP request {:i}:{} -> {:i}:{}", src_ip, src_port, dst_ip, dst_port,
     );
@@ -421,14 +450,14 @@ pub fn handle_tcp_egress(ctx: TcContext) -> Result<i32, i32> {
     if tcp_hdr_ref.rst() == 1 {
         let if_connected = unsafe { CONNECTIONS.get(&ses) };
         if if_connected.is_some() {
-            info!(&ctx, "Closing {:i}:{} on TCP", ses.src_ip, ses.src_port);
+            debug!(&ctx, "Closing {:i}:{} on TCP", ses.src_ip, ses.src_port);
+            unsafe { DEL.output(&ctx, &ses, 0) };
         }
-        Ok(TC_ACT_PIPE)
     } else {
         unsafe { NEW.output(&ctx, &connection, 0) };
-
-        Ok(TC_ACT_PIPE)
     }
+    // Just forward our request outside!!
+    Ok(TC_ACT_PIPE)
 }
 
 pub fn handle_icmp_egress(ctx: TcContext) -> Result<i32, i32> {
