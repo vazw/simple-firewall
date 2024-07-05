@@ -65,8 +65,17 @@ async fn main() -> Result<(), anyhow::Error> {
     let program: &mut Xdp = bpf.program_mut("sfw").unwrap().try_into()?;
     program.unload().unwrap_or(());
     program.load()?;
-    program.attach(&opt.iface, XdpFlags::default())
-        .context("failed to attach the XDP program with default flags - try changing XdpFlags::default() to XdpFlags::SKB_MODE")?;
+    if program.attach(&opt.iface, XdpFlags::HW_MODE).is_ok() {
+        info!("Hardware Mode Enabled");
+    } else if program.attach(&opt.iface, XdpFlags::DRV_MODE).is_ok() {
+        info!("DRV_MODE Mode Enabled");
+    } else if program.attach(&opt.iface, XdpFlags::SKB_MODE).is_ok() {
+        info!("SKB_MODE Mode Enabled");
+    } else {
+        program.attach(&opt.iface, XdpFlags::default())
+            .context("failed to attach the XDP program with default flags - try changing XdpFlags::default() to XdpFlags::SKB_MODE")?;
+        info!("Default Mode Enabled");
+    }
 
     let egress_program: &mut SchedClassifier = bpf.program_mut("sfw_egress").unwrap().try_into()?;
     egress_program.load()?;
