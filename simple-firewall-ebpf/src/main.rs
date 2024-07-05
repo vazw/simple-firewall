@@ -21,7 +21,7 @@ use network_types::{
     tcp::TcpHdr,
     udp::UdpHdr,
 };
-use simple_firewall_common::{Connection, IcmpPacket, Session};
+use simple_firewall_common::{Connection, Session};
 
 #[map(name = "IAP")]
 static mut IAP: HashMap<u16, u16> = HashMap::with_max_entries(24, 0);
@@ -128,7 +128,7 @@ fn get_total_cpu_counter() -> u32 {
 }
 
 // const ICMP_ECHO_REPLY: u8 = 0;
-const ICMP_DEST_UNREACH: u8 = 3;
+// const ICMP_DEST_UNREACH: u8 = 3;
 const ICMP_ECHO_REQUEST: u8 = 8;
 // const ICMP_TIME_EXCEEDED: u8 = 11;
 
