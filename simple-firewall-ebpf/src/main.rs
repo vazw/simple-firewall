@@ -38,9 +38,6 @@ static mut RATE: PerCpuArray<u32> = PerCpuArray::with_max_entries(1, 0);
 #[map(name = "RATE_LIMIT")]
 static mut RATE_LIMIT: Array<u32> = Array::with_max_entries(1, 0);
 
-#[map(name = "ICMP_EVENTS")]
-static mut ICMP_EVENTS: PerfEventArray<IcmpPacket> = PerfEventArray::with_max_entries(128, 0);
-
 #[map(name = "HOST")]
 static mut HOST: Array<u32> = Array::with_max_entries(1, 0);
 
@@ -132,7 +129,8 @@ fn get_total_cpu_counter() -> u32 {
 
 // const ICMP_ECHO_REPLY: u8 = 0;
 const ICMP_DEST_UNREACH: u8 = 3;
-const ICMP_TIME_EXCEEDED: u8 = 11;
+const ICMP_ECHO_REQUEST: u8 = 8;
+// const ICMP_TIME_EXCEEDED: u8 = 11;
 
 #[xdp]
 pub fn sfw(ctx: XdpContext) -> u32 {
@@ -159,23 +157,9 @@ fn try_simple_firewall(ctx: XdpContext) -> Result<u32, u32> {
                 IpProto::Icmp => {
                     let header: *const IcmpHdr = ptr_at(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?;
                     let icmp_type: u8 = unsafe { (*header).type_ };
+                    info!(&ctx, "ICMP {} {:i} -> {:i} ", icmp_type, src_ip, dst_ip);
                     match icmp_type {
-                        ICMP_TIME_EXCEEDED => {
-                            info!(&ctx, "TIME");
-                            Ok(xdp_action::XDP_PASS)
-                        }
-                        ICMP_DEST_UNREACH => {
-                            info!(&ctx, "UNREACH");
-                            let event = IcmpPacket {
-                                src_ip,
-                                dst_ip,
-                                icmp_type,
-                            };
-                            unsafe {
-                                ICMP_EVENTS.output(&ctx, &event, 0);
-                            }
-                            Ok(xdp_action::XDP_PASS)
-                        }
+                        ICMP_ECHO_REQUEST => Ok(xdp_action::XDP_DROP),
                         _ => Ok(xdp_action::XDP_DROP),
                     }
                 }
@@ -468,25 +452,10 @@ pub fn handle_icmp_egress(ctx: TcContext) -> Result<i32, i32> {
     let icmp_hdr: *mut IcmpHdr = unsafe { ptr_mut(&ctx, icmp_header_offset)? };
     let icmp_type: u8 = unsafe { (*icmp_hdr).type_ };
 
-    if unsafe { (*icmp_hdr).type_ } != ICMP_DEST_UNREACH {
-        return Ok(TC_ACT_PIPE);
-    }
-
     let src_ip = u32::from_be(unsafe { (*ip_hdr).src_addr });
     let dst_ip = u32::from_be(unsafe { (*ip_hdr).dst_addr });
 
-    let event = IcmpPacket {
-        src_ip,
-        dst_ip,
-        icmp_type,
-    };
-    unsafe {
-        ICMP_EVENTS.output(&ctx, &event, 0);
-    }
-    info!(
-        &ctx,
-        "ICMP Unreachable packet destined to ip: {:i} ", dst_ip
-    );
+    info!(&ctx, "ICMP {} {:i} -> {:i} ", icmp_type, src_ip, dst_ip);
 
     Ok(TC_ACT_PIPE)
 }

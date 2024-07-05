@@ -17,7 +17,7 @@ use figment::{
 };
 use local_ip_address::local_ip;
 use log::{debug, info, warn};
-use simple_firewall_common::{Connection, IcmpPacket, Session};
+use simple_firewall_common::{Connection, Session};
 use tokio::signal;
 use tokio::time::{interval, Duration, Instant};
 
@@ -67,6 +67,7 @@ async fn main() -> Result<(), anyhow::Error> {
     program.load()?;
     program.attach(&opt.iface, XdpFlags::default())
         .context("failed to attach the XDP program with default flags - try changing XdpFlags::default() to XdpFlags::SKB_MODE")?;
+
     let egress_program: &mut SchedClassifier = bpf.program_mut("sfw_egress").unwrap().try_into()?;
     egress_program.load()?;
     egress_program
@@ -132,24 +133,24 @@ async fn main() -> Result<(), anyhow::Error> {
             Ok::<_>(())
         });
     }
-    let mut icmp_array = AsyncPerfEventArray::try_from(bpf.take_map("ICMP_EVENTS").unwrap())?;
-    for cpu_id in online_cpus()? {
-        let mut perf_buf = icmp_array.open(cpu_id, None)?;
-        tokio::task::spawn(async move {
-            let mut buf = vec![BytesMut::with_capacity(1024); 10];
-            loop {
-                let events = perf_buf.read_events(&mut buf).await?;
-                for event in buf.iter_mut().take(events.read) {
-                    let key = unsafe { &*(event.as_ptr() as *const IcmpPacket) };
-                    let src_ip = Ipv4Addr::from(key.src_ip);
-                    let dst_ip = Ipv4Addr::from(key.dst_ip);
-                    info!("ICMP packet captured: {} -> {}", src_ip, dst_ip);
-                }
-            }
-
-            Ok::<_>(())
-        });
-    }
+    // let mut icmp_array = AsyncPerfEventArray::try_from(bpf.take_map("ICMP_EVENTS").unwrap())?;
+    // for cpu_id in online_cpus()? {
+    //     let mut perf_buf = icmp_array.open(cpu_id, None)?;
+    //     tokio::task::spawn(async move {
+    //         let mut buf = vec![BytesMut::with_capacity(1024); 10];
+    //         loop {
+    //             let events = perf_buf.read_events(&mut buf).await?;
+    //             for event in buf.iter_mut().take(events.read) {
+    //                 let key = unsafe { &*(event.as_ptr() as *const IcmpPacket) };
+    //                 let src_ip = Ipv4Addr::from(key.src_ip);
+    //                 let dst_ip = Ipv4Addr::from(key.dst_ip);
+    //                 info!("ICMP packet captured: {} -> {}", src_ip, dst_ip);
+    //             }
+    //         }
+    //
+    //         Ok::<_>(())
+    //     });
+    // }
     _ = tokio::task::spawn(async move {
         let mut interval_1 = interval(Duration::from_millis(10));
         let mut interval_2 = interval(Duration::from_millis(10));

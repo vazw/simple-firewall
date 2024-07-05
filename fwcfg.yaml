@@ -1,9 +1,4 @@
 {
-  "67": "i,udp", # router
-  # "22": "io,tcp",
-  # "80": "i,tcp",
-  # "8181": "i,tcp",
-  # "443": "i,tcp",
   # "123": "i,udp", # sync time
   # "5353": "o,udp", # dns multi-cast
   "22000": "io,tcp,udp", #syncthing
