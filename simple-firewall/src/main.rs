@@ -61,6 +61,12 @@ async fn main() -> Result<(), anyhow::Error> {
         // This can happen if you remove all log statements from your eBPF program.
         warn!("failed to initialize eBPF logger: {}", e);
     }
+
+    let program: &mut Xdp = bpf.program_mut("sfw").unwrap().try_into()?;
+    program.unload().unwrap_or(());
+    program.load()?;
+    program.attach(&opt.iface, XdpFlags::default())
+        .context("failed to attach the XDP program with default flags - try changing XdpFlags::default() to XdpFlags::SKB_MODE")?;
     let egress_program: &mut SchedClassifier = bpf.program_mut("sfw_egress").unwrap().try_into()?;
     egress_program.load()?;
     egress_program
@@ -76,13 +82,16 @@ async fn main() -> Result<(), anyhow::Error> {
     config_len = config_.len();
     _ = load_config(&mut bpf, &opt, &config_, &host_addr);
     let mut perf_array = AsyncPerfEventArray::try_from(bpf.take_map("NEW").unwrap())?;
+    let mut delete_array = AsyncPerfEventArray::try_from(bpf.take_map("DEL").unwrap())?;
     let (add_send, mut add_rev) = tokio::sync::mpsc::channel(1024);
     let (del_send, mut del_rev) = tokio::sync::mpsc::channel(1024);
 
     for cpu_id in online_cpus()? {
         let del_send = del_send.clone();
+        let del_send_2 = del_send.clone();
         let add_send = add_send.clone();
         let mut perf_buf = perf_array.open(cpu_id, None)?;
+        let mut del_buf = delete_array.open(cpu_id, None)?;
         tokio::task::spawn(async move {
             let mut u_connection: std::collections::HashMap<Session, Instant> =
                 std::collections::HashMap::new();
@@ -94,7 +103,7 @@ async fn main() -> Result<(), anyhow::Error> {
                     let sess = Session {
                         src_ip: key.dst_ip,
                         src_port: key.dst_port,
-                        protocol: 6,
+                        protocol: key.protocol,
                     };
                     add_send.send((sess, *key)).await?;
                     u_connection.insert(sess, Instant::now());
@@ -111,11 +120,20 @@ async fn main() -> Result<(), anyhow::Error> {
 
             Ok::<_>(())
         });
+        tokio::task::spawn(async move {
+            let mut buf = vec![BytesMut::with_capacity(1024); 10];
+            loop {
+                let events = del_buf.read_events(&mut buf).await?;
+                for event in buf.iter_mut().take(events.read) {
+                    let key = unsafe { &*(event.as_ptr() as *const Session) };
+                    del_send_2.send(*key).await?;
+                }
+            }
+            Ok::<_>(())
+        });
     }
     let mut icmp_array = AsyncPerfEventArray::try_from(bpf.take_map("ICMP_EVENTS").unwrap())?;
     for cpu_id in online_cpus()? {
-        // let del_send = del_send.clone();
-        // let add_send = add_send.clone();
         let mut perf_buf = icmp_array.open(cpu_id, None)?;
         tokio::task::spawn(async move {
             let mut buf = vec![BytesMut::with_capacity(1024); 10];
@@ -125,7 +143,7 @@ async fn main() -> Result<(), anyhow::Error> {
                     let key = unsafe { &*(event.as_ptr() as *const IcmpPacket) };
                     let src_ip = Ipv4Addr::from(key.src_ip);
                     let dst_ip = Ipv4Addr::from(key.dst_ip);
-                    println!("ICMP packet captured: {} -> {}", src_ip, dst_ip);
+                    info!("ICMP packet captured: {} -> {}", src_ip, dst_ip);
                 }
             }
 
@@ -231,14 +249,9 @@ fn load_config(
     config: &std::collections::HashMap<String, String>,
     host_addr: &Ipv4Addr,
 ) -> Result<(), anyhow::Error> {
-    println!("Listening on {} IP: {}", &opt.iface, &host_addr.to_string());
+    info!("Listening on {} IP: {}", &opt.iface, &host_addr.to_string());
     // Clear mem first
     //
-    let program: &mut Xdp = bpf.program_mut("sfw").unwrap().try_into()?;
-    program.unload().unwrap_or(());
-    program.load()?;
-    program.attach(&opt.iface, XdpFlags::default())
-        .context("failed to attach the XDP program with default flags - try changing XdpFlags::default() to XdpFlags::SKB_MODE")?;
     let mut rate_limit: Array<_, u32> = Array::try_from(bpf.map_mut("RATE_LIMIT").unwrap())?;
     rate_limit.set(0, 1000, 0)?;
     // let mut cpus: Array<_, u32> = Array::try_from(bpf.map_mut("CPUS").unwrap())?;
@@ -287,6 +300,6 @@ fn load_config(
             dns_list.insert(addrs, addrs, 0)?;
         }
     }
-    println!("Done!");
+    info!("Done parsing config!");
     Ok(())
 }
