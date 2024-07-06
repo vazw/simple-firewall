@@ -62,6 +62,12 @@ async fn main() -> Result<(), anyhow::Error> {
         warn!("failed to initialize eBPF logger: {}", e);
     }
 
+    let egress_program: &mut SchedClassifier = bpf.program_mut("sfw_egress").unwrap().try_into()?;
+    egress_program.load()?;
+    egress_program
+        .attach(&opt.iface, TcAttachType::Egress)
+        .with_context(|| "failed to attach the egress TC program")?;
+
     let program: &mut Xdp = bpf.program_mut("sfw").unwrap().try_into()?;
     program.unload().unwrap_or(());
     program.load()?;
@@ -69,19 +75,13 @@ async fn main() -> Result<(), anyhow::Error> {
         info!("Hardware Mode Enabled");
     } else if program.attach(&opt.iface, XdpFlags::DRV_MODE).is_ok() {
         info!("DRV_MODE Mode Enabled");
-    } else if program.attach(&opt.iface, XdpFlags::SKB_MODE).is_ok() {
-        info!("SKB_MODE Mode Enabled");
-    } else {
-        program.attach(&opt.iface, XdpFlags::default())
-            .context("failed to attach the XDP program with default flags - try changing XdpFlags::default() to XdpFlags::SKB_MODE")?;
+    } else if program.attach(&opt.iface, XdpFlags::default()).is_ok() {
         info!("Default Mode Enabled");
+    } else {
+        program.attach(&opt.iface, XdpFlags::SKB_MODE)
+            .context("failed to attach the XDP program with default flags - try changing XdpFlags::default() to XdpFlags::SKB_MODE")?;
+        info!("SKB_MODE Mode Enabled");
     }
-
-    let egress_program: &mut SchedClassifier = bpf.program_mut("sfw_egress").unwrap().try_into()?;
-    egress_program.load()?;
-    egress_program
-        .attach(&opt.iface, TcAttachType::Egress)
-        .with_context(|| "failed to attach the egress TC program")?;
 
     let mut config_len: usize;
     let config = Figment::new().merge(Yaml::file(&opt.config));
