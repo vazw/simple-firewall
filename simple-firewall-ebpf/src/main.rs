@@ -204,8 +204,7 @@ fn handle_tcp_xdp(
             unsafe { DEL.output(&ctx, session, 0) };
         }
         Ok(xdp_action::XDP_PASS)
-    } else if tcp_port_allowed_in(&port) || tcp_port_allowed_out(&port_to) {
-        // add_request(&session, &connection);
+    } else if tcp_port_allowed_in(&port_to) {
         debug!(
             &ctx,
             "TCP {:i}:{} ===> {:i}:{}",
@@ -237,6 +236,11 @@ fn handle_udp_xdp(
     let header: *const UdpHdr = ptr_at(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?;
     // external port comming from outside
     let port = u16::from_be(unsafe { (*header).source });
+    // Allow to acsess is_broadcast request
+    if unsafe { TEMPORT.get(&port).is_some() } {
+        _ = unsafe { TEMPORT.remove(&port) };
+        return Ok(xdp_action::XDP_PASS);
+    }
     // someone reaching to internal port
     let port_to = u16::from_be(unsafe { (*header).dest });
     let connection = Connection {
@@ -277,16 +281,6 @@ fn handle_udp_xdp(
         //     tos,
         //     id,
         // );
-        Ok(xdp_action::XDP_PASS)
-    } else if udp_port_allowed_out(&port_to) {
-        debug!(
-            &ctx,
-            "UDP OUT! {:i}:{} ===> {:i}:{}",
-            src_ip.to_bits(),
-            port,
-            dst_ip.to_bits(),
-            port_to
-        );
         Ok(xdp_action::XDP_PASS)
     } else if udp_port_allowed_in(&port) {
         if !rate_limit() {
@@ -425,16 +419,26 @@ pub fn handle_udp_egress(ctx: TcContext) -> Result<i32, i32> {
     // };
     let session = &connection.egress_session();
     unsafe { NEW.output(&ctx, &connection, 0) };
-    if !is_requested(session) {
-        info!(
+    if udp_port_allowed_out(&src_port) {
+        debug!(
             &ctx,
-            "UDP Bind {:i}:{} -> {:i}:{}",
+            "UDP OUT! {:i}:{} ===> {:i}:{}",
             src_ip.to_bits(),
             src_port,
             dst_ip.to_bits(),
-            dst_port,
+            dst_port
         );
-        add_request(session, &connection);
+        if !is_requested(session) {
+            info!(
+                &ctx,
+                "UDP Bind {:i}:{} -> {:i}:{}",
+                src_ip.to_bits(),
+                src_port,
+                dst_ip.to_bits(),
+                dst_port,
+            );
+            add_request(session, &connection);
+        }
     }
     // Just forward our request outside!!
     Ok(TC_ACT_PIPE)
@@ -472,7 +476,8 @@ pub fn handle_tcp_egress(ctx: TcContext) -> Result<i32, i32> {
             _ = unsafe { CONNECTIONS.remove(ses) };
             unsafe { DEL.output(&ctx, ses, 0) };
         }
-    } else {
+    } else if tcp_port_allowed_out(&dst_port) {
+        // add_request(&session, &connection);
         unsafe { NEW.output(&ctx, &connection, 0) };
         if !is_requested(ses) {
             info!(
@@ -487,6 +492,14 @@ pub fn handle_tcp_egress(ctx: TcContext) -> Result<i32, i32> {
         }
     }
     // Just forward our request outside!!
+    debug!(
+        &ctx,
+        "TCP {:i}:{} ===> {:i}:{}",
+        src_ip.to_bits(),
+        src_port,
+        dst_ip.to_bits(),
+        dst_port
+    );
     Ok(TC_ACT_PIPE)
 }
 
