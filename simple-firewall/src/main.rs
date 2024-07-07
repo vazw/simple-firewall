@@ -17,7 +17,7 @@ use figment::{
 };
 use local_ip_address::local_ip;
 use log::{debug, info, warn};
-use simple_firewall_common::{Connection, Session};
+use simple_firewall_common::{Connection, Session, SessionKey};
 use tokio::signal;
 use tokio::time::{interval, Duration, Instant};
 
@@ -99,27 +99,31 @@ async fn main() -> Result<(), anyhow::Error> {
     config_len = config_.len();
     _ = load_config(&mut bpf, &opt, &config_, &host_addr);
     let mut perf_array = AsyncPerfEventArray::try_from(bpf.take_map("NEW").unwrap())?;
-    let mut delete_array = AsyncPerfEventArray::try_from(bpf.take_map("DEL").unwrap())?;
-    let (add_send, mut add_rev) = tokio::sync::mpsc::channel(1024);
-    let (del_send, mut del_rev) = tokio::sync::mpsc::channel(1024);
+    let mut del_array = AsyncPerfEventArray::try_from(bpf.take_map("DEL").unwrap())?;
+    let (del_send, mut del_rev) = tokio::sync::mpsc::channel(256);
 
     for cpu_id in online_cpus()? {
         let del_send = del_send.clone();
-        let del_send_2 = del_send.clone();
-        let add_send = add_send.clone();
         let mut perf_buf = perf_array.open(cpu_id, None)?;
-        let mut del_buf = delete_array.open(cpu_id, None)?;
+        let mut del_buf = del_array.open(cpu_id, None)?;
         tokio::task::spawn(async move {
-            let mut u_connection: std::collections::HashMap<Connection, Instant> =
+            let mut u_connection: std::collections::HashMap<SessionKey, Instant> =
                 std::collections::HashMap::new();
-            let mut buf = vec![BytesMut::with_capacity(1024); 10];
+            let mut buf = vec![BytesMut::with_capacity(1600); 10];
+            let mut buf_del = vec![BytesMut::with_capacity(800); 10];
             loop {
-                let events = perf_buf.read_events(&mut buf).await?;
+                let events = perf_buf
+                    .read_events(&mut buf)
+                    .await
+                    .expect("new conection event");
                 for event in buf.iter_mut().take(events.read) {
                     let key = unsafe { &*(event.as_ptr() as *const Connection) };
-                    let sess = key.egress_session();
-                    add_send.send((sess, *key)).await?;
-                    u_connection.insert(*key, Instant::now());
+                    u_connection.insert(key.session(), Instant::now());
+                }
+                let events = del_buf.read_events(&mut buf).await.expect("delete event");
+                for event in buf_del.iter_mut().take(events.read) {
+                    let key = unsafe { &*(event.as_ptr() as *const Session) };
+                    u_connection.remove(&(*key).session());
                 }
                 for k in u_connection.clone().keys() {
                     if let Some(v) = u_connection.get(k) {
@@ -131,17 +135,6 @@ async fn main() -> Result<(), anyhow::Error> {
                 }
             }
 
-            Ok::<_>(())
-        });
-        tokio::task::spawn(async move {
-            let mut buf = vec![BytesMut::with_capacity(1024); 10];
-            loop {
-                let events = del_buf.read_events(&mut buf).await?;
-                for event in buf.iter_mut().take(events.read) {
-                    let key = unsafe { &*(event.as_ptr() as *const Connection) };
-                    del_send_2.send(*key).await?;
-                }
-            }
             Ok::<_>(())
         });
     }
@@ -165,8 +158,8 @@ async fn main() -> Result<(), anyhow::Error> {
     // }
 
     _ = tokio::task::spawn(async move {
-        let mut interval_1 = interval(Duration::from_millis(50));
-        let mut interval_2 = interval(Duration::from_millis(50));
+        let mut interval_1 = interval(Duration::from_millis(1000));
+        let mut interval_2 = interval(Duration::from_millis(250));
         let mut heart_rate = interval(Duration::from_secs(1));
         let mut rate_limit: PerCpuArray<_, u32> =
             PerCpuArray::try_from(bpf.take_map("RATE").expect("get map RATE"))?;
@@ -176,51 +169,24 @@ async fn main() -> Result<(), anyhow::Error> {
         loop {
             tokio::select! {
                 _ = interval_1.tick() => {
-                    let con = add_rev.try_recv();
-                    if con.is_ok() {
-                        let (sess, con) = con.unwrap();
-                        let src_ip = con.src_ip;
-                        let dst_ip = sess.src_ip;
-                        let protocal = con.protocal;
-                        if connections.get(&sess, 0).is_err() && connections.insert(sess , con, 0).is_ok() {
-                            info!(
-                                "Bind {:?} {}:{} --> {}:{}",
-                                protocal, src_ip, con.src_port, dst_ip, sess.src_port
-                            );
-                        }
-                    }
                     let con = del_rev.try_recv();
                     if con.is_ok() {
-                        let con = con.unwrap();
+                        let session = con.unwrap();
                         // Check if connections still exits
-                        let protocal = if con.protocal == 6 {"TCP"} else {"UDP"};
-                        if connections.remove(&con.egress_session()).is_ok() {
-                            info!("Closing {}:{} on {}", con.dst_ip.to_string(), con.dst_port, protocal);
+                        let src_ip = Ipv4Addr::from(session.src_ip);
+                        let protocal = if session.protocal == 6 {"TCP"} else {"UDP"};
+                        if connections.remove(&session.session()).is_ok() {
+                            info!("Closing {} on {}:{}", protocal, src_ip.to_string(), session.src_port);
                         } else {
                         // The connections maybe removed by `rst` signal
-                            let mut n = 0;
-                            let cons = connections.keys();
-                            for con in cons {
-                                if con.is_ok() {
-                                    n +=1; println!("{:#?}",con);
-                                };
-                            }
                             info!(
-                                "Closed {}:{} on {} total connections: {}",
-                                con.dst_ip.to_string(),
-                                con.dst_port,
-                                protocal, n
+                                "Closed {}:{} on {}",
+                                src_ip.to_string(),
+                                session.src_port,
+                                protocal
                             );
                         }
                     }
-                    // if heart_reset {
-                    //     let keys = connections.keys();
-                    //     for key in keys {
-                    //         if key.is_ok() {
-                    //             println!("{:#?}", key.unwrap());
-                    //         }
-                    //     }
-                    // }
                 }
                 _ = interval_2.tick() => {
                     let new_config: std::collections::HashMap<String, String>
@@ -231,8 +197,6 @@ async fn main() -> Result<(), anyhow::Error> {
                     };
 
                     if heart_reset {
-                        // let rate = rate_limit.get(&0u32,0);
-                        // println!("1s {:?}", rate.unwrap().iter().sum::<u32>());
                         rate_limit.set(0,PerCpuValues::try_from(vec![0u32;nr_cpus()?])?,0)?;
                         heart_reset = false;
                     }
@@ -245,14 +209,6 @@ async fn main() -> Result<(), anyhow::Error> {
         }
         Ok(())
     });
-    // loop {
-    //     tokio::select! {
-    //         _ = signal::ctrl_c() => {
-    //             info!("Exiting...");
-    //             break;
-    //         }
-    //     }
-    // }
     signal::ctrl_c().await?;
     info!("Exiting...");
     Ok(())
