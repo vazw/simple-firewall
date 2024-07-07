@@ -83,4 +83,14 @@ impl Connection {
             protocal: self.protocal,
         }
     }
+    pub fn into_egress_connection(self: &Self) -> Connection {
+        Connection {
+            state: self.state,
+            src_ip: self.dst_ip,
+            dst_ip: self.src_ip,
+            src_port: self.dst_port,
+            dst_port: self.src_port,
+            protocal: self.protocal,
+        }
+    }
 }
