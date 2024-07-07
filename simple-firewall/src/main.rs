@@ -62,25 +62,31 @@ async fn main() -> Result<(), anyhow::Error> {
         warn!("failed to initialize eBPF logger: {}", e);
     }
 
+    info!("Attaching sfw_egress in to network traffic control classifier");
     let egress_program: &mut SchedClassifier = bpf.program_mut("sfw_egress").unwrap().try_into()?;
     egress_program.load()?;
-    egress_program
+    if egress_program
         .attach(&opt.iface, TcAttachType::Egress)
-        .with_context(|| "failed to attach the egress TC program")?;
+        .is_err()
+    {
+        warn!("failed to initialize sfw_egress");
+        warn!("FALLBACK TO SIMEPLE MODE");
+    }
 
+    info!("Attaching sfw into XDP map");
     let program: &mut Xdp = bpf.program_mut("sfw").unwrap().try_into()?;
     program.unload().unwrap_or(());
     program.load()?;
     if program.attach(&opt.iface, XdpFlags::HW_MODE).is_ok() {
-        info!("Hardware Mode Enabled");
+        info!("XDP Hardware Mode Enabled");
     } else if program.attach(&opt.iface, XdpFlags::DRV_MODE).is_ok() {
-        info!("DRV_MODE Mode Enabled");
+        info!("XDP DRV_MODE Mode Enabled");
     } else if program.attach(&opt.iface, XdpFlags::default()).is_ok() {
-        info!("Default Mode Enabled");
+        info!("XDP Default Mode Enabled");
     } else {
         program.attach(&opt.iface, XdpFlags::SKB_MODE)
             .context("failed to attach the XDP program with default flags - try changing XdpFlags::default() to XdpFlags::SKB_MODE")?;
-        info!("SKB_MODE Mode Enabled");
+        info!("XDP SKB_MODE Mode Enabled");
     }
 
     let mut config_len: usize;
@@ -161,15 +167,15 @@ async fn main() -> Result<(), anyhow::Error> {
     //     });
     // }
     _ = tokio::task::spawn(async move {
-        let mut interval_1 = interval(Duration::from_millis(10));
-        let mut interval_2 = interval(Duration::from_millis(10));
+        let mut interval_1 = interval(Duration::from_millis(40));
+        let mut interval_2 = interval(Duration::from_millis(50));
         let mut heart_rate = interval(Duration::from_secs(1));
         let mut heart_reset: bool = false;
-        let mut connections: HashMap<_, Session, Connection> =
-            HashMap::try_from(bpf.take_map("CONS").unwrap())?;
         loop {
             tokio::select! {
                 _ = interval_1.tick() => {
+                    let mut connections: HashMap<_, Session, Connection> =
+                        HashMap::try_from(bpf.map_mut("CONS").unwrap())?;
                     let con = add_rev.try_recv();
                     if con.is_ok() {
                         let (sess, con) = con.unwrap();
@@ -182,22 +188,15 @@ async fn main() -> Result<(), anyhow::Error> {
                                 protocal, src_ip, con.src_port, dst_ip, sess.src_port
                             );
                         }
-                            // } else {
-                            //         info!(
-                            //             "Fail Binding {} {}:{} --> {}:{}",
-                            //             protocal, src_ip, con.src_port, dst_ip, sess.src_port
-                            //         );
-                            // };
                     }
                     let con = del_rev.try_recv();
                     if con.is_ok() {
                         let con = con.unwrap();
-                        let src_ip = Ipv4Addr::from(con.src_ip);
                         let protocal = if con.protocol == 6 {"TCP"} else {"UDP"};
                         // Check if connections still exits
                         if connections.get(&con, 0).is_ok()
                             && connections.remove(&con).is_ok() {
-                            info!("Closing {}:{} on {}", src_ip, con.src_port, protocal);
+                            info!("Closing {}:{} on {}", con.src_ip.to_string(), con.src_port, protocal);
                         } else {
                         // The connections maybe removed by `rst` signal
                             let mut n = 0;
@@ -205,14 +204,20 @@ async fn main() -> Result<(), anyhow::Error> {
                             for con in cons { if con.is_ok() { n +=1 }; }
                             info!(
                                 "Closed {}:{} on {} total connections: {}",
-                                src_ip,
+                                con.src_ip.to_string(),
                                 con.src_port,
                                 protocal, n
                             );
                         }
                     }
-
-
+                    // if heart_reset {
+                    //     let keys = connections.keys();
+                    //     for key in keys {
+                    //         if key.is_ok() {
+                    //             println!("{:#?}", key.unwrap());
+                    //         }
+                    //     }
+                    // }
                 }
                 _ = interval_2.tick() => {
                     let new_config: std::collections::HashMap<String, String>
@@ -223,9 +228,8 @@ async fn main() -> Result<(), anyhow::Error> {
                     };
 
                     if heart_reset {
-                        let mut rate_limit: PerCpuArray<_, u32>
-                            = PerCpuArray::try_from(bpf.map_mut("RATE")
-                                .expect("get map RATE"))?;
+                        let mut rate_limit: PerCpuArray<_, u32> =
+                            PerCpuArray::try_from(bpf.map_mut("RATE").expect("get map RATE"))?;
                         // let rate = rate_limit.get(&0u32,0);
                         // println!("1s {:?}", rate.unwrap().iter().sum::<u32>());
                         rate_limit.set(0,PerCpuValues::try_from(vec![0u32;nr_cpus()?])?,0)?;

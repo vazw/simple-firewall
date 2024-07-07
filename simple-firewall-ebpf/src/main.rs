@@ -55,22 +55,22 @@ fn ptr_at<T>(ctx: &XdpContext, offset: usize) -> Result<*const T, u32> {
     Ok((start + offset) as *const T)
 }
 
-fn is_requested(session: &Session) -> bool {
-    // if let Some(con) = unsafe { CONNECTIONS.get(connection) } {
-    //     con.eq(connection)
-    // } else {
-    //     false
-    // }
-    unsafe { CONNECTIONS.get(session).is_some() }
-}
-
-fn add_request(session: &Session, connection: &Connection) {
-    if unsafe { CONNECTIONS.get(session).is_none() } {
-        unsafe {
-            let _ = CONNECTIONS.insert(session, connection, 0);
-        }
-    }
-}
+// fn is_requested(session: &Session) -> bool {
+//     unsafe { CONNECTIONS.get(session).is_some() }
+//     // if let Some(con) = unsafe { CONNECTIONS.get(connection) } {
+//     //     con.eq(connection)
+//     // } else {
+//     //     false
+//     // }
+// }
+//
+// fn add_request(session: &Session, connection: &Connection) {
+//     if unsafe { CONNECTIONS.get(session).is_none() } {
+//         unsafe {
+//             let _ = CONNECTIONS.insert(session, connection, 0);
+//         }
+//     }
+// }
 
 fn rate_add() {
     if let Some(counter) = unsafe { RATE.get_ptr_mut(0) } {
@@ -101,9 +101,9 @@ fn udp_port_allowed_in(port: &u16) -> bool {
 fn udp_port_allowed_out(port: &u16) -> bool {
     unsafe { UDP_OAP.get(port).is_some() }
 }
-fn ip_addr_allowed(addrs: &u32) -> bool {
-    unsafe { ALLST.get(addrs).is_some() }
-}
+// fn ip_addr_allowed(addrs: &u32) -> bool {
+//     unsafe { ALLST.get(addrs).is_some() }
+// }
 
 #[inline(always)]
 fn get_total_cpu_counter() -> u32 {
@@ -127,10 +127,10 @@ fn get_total_cpu_counter() -> u32 {
     sum
 }
 
-// const ICMP_ECHO_REPLY: u8 = 0;
-// const ICMP_DEST_UNREACH: u8 = 3;
+const ICMP_ECHO_REPLY: u8 = 0;
+const ICMP_DEST_UNREACH: u8 = 3;
 const ICMP_ECHO_REQUEST: u8 = 8;
-// const ICMP_TIME_EXCEEDED: u8 = 11;
+const ICMP_TIME_EXCEEDED: u8 = 11;
 
 #[xdp]
 pub fn sfw(ctx: XdpContext) -> u32 {
@@ -145,10 +145,11 @@ fn try_simple_firewall(ctx: XdpContext) -> Result<u32, u32> {
     match unsafe { (*ethhdr).ether_type } {
         EtherType::Ipv4 => {
             let ipv: *const Ipv4Hdr = ptr_at(&ctx, EthHdr::LEN)?;
-            let src_ip = u32::from_be(unsafe { (*ipv).src_addr });
-            let dst_ip = u32::from_be(unsafe { (*ipv).dst_addr });
+            let src_ip = unsafe { (*ipv).src_addr() };
+            let dst_ip = unsafe { (*ipv).dst_addr() };
+            let protocal = unsafe { (*ipv).proto };
             // let size = unsafe { (*ipv).tot_len };
-            match unsafe { (*ipv).proto } {
+            match protocal {
                 IpProto::Gre => {
                     // let header = ptr_at(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?;
                     info!(&ctx, "GRE tunnelling🥰");
@@ -157,9 +158,25 @@ fn try_simple_firewall(ctx: XdpContext) -> Result<u32, u32> {
                 IpProto::Icmp => {
                     let header: *const IcmpHdr = ptr_at(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?;
                     let icmp_type: u8 = unsafe { (*header).type_ };
-                    info!(&ctx, "ICMP {} {:i} -> {:i} ", icmp_type, src_ip, dst_ip);
+                    let icmp_text = match icmp_type {
+                        0 => "ECHO REPLY",
+                        3 => "PORT UNREACH",
+                        8 => "ECHO REQUEST",
+                        11 => "Time OUT",
+                        _ => "{icmp_type}",
+                    };
+                    info!(
+                        &ctx,
+                        "ICMP {} {:i} -> {:i} ",
+                        icmp_text,
+                        src_ip.to_bits(),
+                        dst_ip.to_bits()
+                    );
                     match icmp_type {
                         ICMP_ECHO_REQUEST => Ok(xdp_action::XDP_DROP),
+                        ICMP_DEST_UNREACH => Ok(xdp_action::XDP_PASS),
+                        ICMP_ECHO_REPLY => Ok(xdp_action::XDP_PASS),
+                        ICMP_TIME_EXCEEDED => Ok(xdp_action::XDP_PASS),
                         _ => Ok(xdp_action::XDP_DROP),
                     }
                 }
@@ -169,22 +186,26 @@ fn try_simple_firewall(ctx: XdpContext) -> Result<u32, u32> {
                     let port = u16::from_be(unsafe { (*header).source });
                     // someone reaching to internal port
                     let port_to = u16::from_be(unsafe { (*header).dest });
-                    let connection = Connection {
-                        state: 2,
-                        src_ip,
-                        dst_ip,
-                        src_port: port,
-                        dst_port: port_to,
-                        protocol: 6,
-                    };
                     let session = Session {
-                        src_ip,
+                        src_ip: src_ip.to_bits(),
                         src_port: port,
-                        protocol: 6,
+                        protocol: protocal as u8,
                     };
+                    // info!(
+                    //     &ctx,
+                    //     "Session is {:i}:{} {}",
+                    //     session.src_ip.to_bits(),
+                    //     session.src_port,
+                    //     session.protocol
+                    // );
 
                     if let Some(tcp_hdr_ref) = unsafe { header.as_ref() } {
-                        // info!(&ctx, "con {:i}:{}", connection.src_ip, connection.src_port);
+                        // info!(
+                        //     &ctx,
+                        //     "con {:i}:{}",
+                        //     connection.src_ip.to_bits(),
+                        //     connection.src_port
+                        // );
                         // info!(
                         //     &ctx,
                         //     "ack {}| cwr {}| ece {}| fin {}| psh {}| rst {}| syn {}| urg{}",
@@ -210,32 +231,36 @@ fn try_simple_firewall(ctx: XdpContext) -> Result<u32, u32> {
                             }
                         }
                     };
-
-                    if is_requested(&session) {
-                        debug!(
+                    if let Some(con) = unsafe { CONNECTIONS.get(&session) } {
+                        info!(
                             &ctx,
-                            "ESTABLISHED on {:i}:{}", connection.src_ip, connection.src_port
+                            "ESTABLISHED on TCP : {:i}:{} - {:i}:{}",
+                            con.src_ip,
+                            con.src_port,
+                            con.dst_ip,
+                            con.dst_port
                         );
                         Ok(xdp_action::XDP_PASS)
                     } else if tcp_port_allowed_in(&port) || tcp_port_allowed_out(&port_to) {
                         // add_request(&session, &connection);
                         debug!(
                             &ctx,
-                            "TCP {:i}:{} ===> {:i}:{}", src_ip, port, dst_ip, port_to
+                            "TCP {:i}:{} ===> {:i}:{}",
+                            src_ip.to_bits(),
+                            port,
+                            dst_ip.to_bits(),
+                            port_to
                         );
                         Ok(xdp_action::XDP_PASS)
                     } else {
                         debug!(
                             &ctx,
-                            "TCP_DROP! {:i}:{} -x-> {:i}:{}", src_ip, port, dst_ip, port_to,
+                            "TCP_DROP! {:i}:{} -x-> {:i}:{}",
+                            src_ip.to_bits(),
+                            port,
+                            dst_ip.to_bits(),
+                            port_to,
                         );
-                        // info!(
-                        //     &ctx,
-                        //     "Session is {:i}:{} {}",
-                        //     session.src_ip,
-                        //     session.src_port,
-                        //     session.protocol
-                        // );
                         Ok(xdp_action::XDP_DROP)
                     }
                 }
@@ -246,68 +271,67 @@ fn try_simple_firewall(ctx: XdpContext) -> Result<u32, u32> {
                     let port = u16::from_be(unsafe { (*header).source });
                     // someone reaching to internal port
                     let port_to = u16::from_be(unsafe { (*header).dest });
-                    let connection = Connection {
-                        state: 2,
-                        src_ip,
-                        dst_ip,
-                        src_port: port,
-                        dst_port: port_to,
-                        protocol: 0x11,
-                    };
                     let session = Session {
-                        src_ip,
+                        src_ip: src_ip.to_bits(),
                         src_port: port,
-                        protocol: 0x11,
+                        protocol: protocal as u8,
                     };
 
-                    if is_requested(&session) {
+                    if unsafe { CONNECTIONS.get(&session).is_some() } {
                         rate_add();
                         debug!(
                             &ctx,
-                            "UDP ESTABLISHED on {:i}:{}", connection.src_ip, connection.src_port
+                            "UDP ESTABLISHED on {:i}:{}", session.src_ip, session.src_port
                         );
                         Ok(xdp_action::XDP_PASS)
-                    } else if port == 53 && ip_addr_allowed(&src_ip) {
-                        // DNS Reslover let her in
-                        add_request(&session, &connection);
-                        debug!(
-                            &ctx,
-                            "DNS! {:i}:{} <=== {:i}:{}", dst_ip, port_to, src_ip, port
-                        );
-                        // debug!(&ctx, "len {} check {}", syn, ack);
-                        // debug!(
-                        //     &ctx,
-                        //     "check {} tot_len {} frag_off {} ttl {} tos {} id {}",
-                        //     check,
-                        //     tot_len,
-                        //     frag_off,
-                        //     ttl,
-                        //     tos,
-                        //     id,
-                        // );
-                        Ok(xdp_action::XDP_PASS)
+                    // } else if port == 53 && ip_addr_allowed(&src_ip) {
+                    //     // DNS Reslover let her in
+                    //     add_request(&session, &connection);
+                    //     debug!(
+                    //         &ctx,
+                    //         "DNS! {:i}:{} <=== {:i}:{}", dst_ip, port_to, src_ip, port
+                    //     );
+                    //     // debug!(&ctx, "len {} check {}", syn, ack);
+                    //     // debug!(
+                    //     //     &ctx,
+                    //     //     "check {} tot_len {} frag_off {} ttl {} tos {} id {}",
+                    //     //     check,
+                    //     //     tot_len,
+                    //     //     frag_off,
+                    //     //     ttl,
+                    //     //     tos,
+                    //     //     id,
+                    //     // );
+                    //     Ok(xdp_action::XDP_PASS)
                     } else if udp_port_allowed_out(&port_to) {
                         debug!(
                             &ctx,
-                            "UDP OUT! {:i}:{} ===> {:i}:{}", src_ip, port, dst_ip, port_to
+                            "UDP OUT! {:i}:{} ===> {:i}:{}",
+                            src_ip.to_bits(),
+                            port,
+                            dst_ip.to_bits(),
+                            port_to
                         );
                         Ok(xdp_action::XDP_PASS)
                     } else if udp_port_allowed_in(&port) {
                         if !rate_limit() {
                             rate_add();
-                            add_request(&session, &connection);
                             debug!(
                                 &ctx,
-                                "UDP IN! {:i}:{} <=== {:i}:{}", dst_ip, port_to, src_ip, port,
+                                "UDP IN! {:i}:{} <=== {:i}:{}",
+                                dst_ip.to_bits(),
+                                port_to,
+                                src_ip.to_bits(),
+                                port,
                             );
                             return Ok(xdp_action::XDP_PASS);
                         } else {
                             debug!(
                                 &ctx,
                                 "RATE LIMITTED! {:i}:{} -x-> {:i}:{}",
-                                src_ip,
+                                src_ip.to_bits(),
                                 port,
-                                dst_ip,
+                                dst_ip.to_bits(),
                                 port_to
                             );
                             return Ok(xdp_action::XDP_DROP);
@@ -315,7 +339,11 @@ fn try_simple_firewall(ctx: XdpContext) -> Result<u32, u32> {
                     } else {
                         debug!(
                             &ctx,
-                            "UDP DROP! {:i}:{} -x-> {:i}:{}", src_ip, port, dst_ip, port_to
+                            "UDP DROP! {:i}:{} -x-> {:i}:{}",
+                            src_ip.to_bits(),
+                            port,
+                            dst_ip.to_bits(),
+                            port_to
                         );
                         return Ok(xdp_action::XDP_DROP);
                     }
@@ -377,68 +405,88 @@ fn try_tc_egress(ctx: TcContext) -> Result<i32, i32> {
 pub fn handle_udp_egress(ctx: TcContext) -> Result<i32, i32> {
     // gather the TCP header
     let ip_hdr: *mut Ipv4Hdr = unsafe { ptr_mut(&ctx, EthHdr::LEN)? };
+    let protocal = unsafe { (*ip_hdr).proto };
     // let size = unsafe { (*ip_hdr).tot_len };
 
     let udp_header_offset = EthHdr::LEN + Ipv4Hdr::LEN;
 
     let udp_hdr: *mut UdpHdr = unsafe { ptr_mut(&ctx, udp_header_offset)? };
 
-    let src_ip = u32::from_be(unsafe { (*ip_hdr).src_addr });
+    let src_ip = unsafe { (*ip_hdr).src_addr() };
     let src_port = u16::from_be(unsafe { (*udp_hdr).source });
-    let dst_ip = u32::from_be(unsafe { (*ip_hdr).dst_addr });
+    let dst_ip = unsafe { (*ip_hdr).dst_addr() };
     let dst_port = u16::from_be(unsafe { (*udp_hdr).dest });
+    debug!(
+        &ctx,
+        "UDP request {:i}:{} -> {:i}:{}",
+        src_ip.to_bits(),
+        src_port,
+        dst_ip.to_bits(),
+        dst_port,
+    );
     let connection = Connection {
         state: 2,
-        src_ip,
-        dst_ip,
+        src_ip: src_ip.to_bits(),
+        dst_ip: dst_ip.to_bits(),
         src_port,
         dst_port,
-        protocol: 0x11,
+        protocol: protocal as u8,
     };
+    // let ses = Session {
+    //     src_ip: dst_ip,
+    //     src_port: dst_port,
+    //     protocol: protocal as u8,
+    // };
     unsafe { NEW.output(&ctx, &connection, 0) };
+    // _ = unsafe { CONNECTIONS.insert(&ses, &connection, 0) };
     // Just forward our request outside!!
     Ok(TC_ACT_PIPE)
 }
 pub fn handle_tcp_egress(ctx: TcContext) -> Result<i32, i32> {
     // gather the TCP header
     let ip_hdr: *mut Ipv4Hdr = unsafe { ptr_mut(&ctx, EthHdr::LEN)? };
+    let protocal = unsafe { (*ip_hdr).proto };
     // let size = unsafe { (*ip_hdr).tot_len };
 
     let tcp_header_offset = EthHdr::LEN + Ipv4Hdr::LEN;
 
     let tcp_hdr: *mut TcpHdr = unsafe { ptr_mut(&ctx, tcp_header_offset)? };
 
-    let src_ip = u32::from_be(unsafe { (*ip_hdr).src_addr });
+    let src_ip = unsafe { (*ip_hdr).src_addr() };
     let src_port = u16::from_be(unsafe { (*tcp_hdr).source });
-    let dst_ip = u32::from_be(unsafe { (*ip_hdr).dst_addr });
+    let dst_ip = unsafe { (*ip_hdr).dst_addr() };
     let dst_port = u16::from_be(unsafe { (*tcp_hdr).dest });
     // The source identifier
     debug!(
         &ctx,
-        "TCP request {:i}:{} -> {:i}:{}", src_ip, src_port, dst_ip, dst_port,
+        "TCP request {:i}:{} -> {:i}:{}",
+        src_ip.to_bits(),
+        src_port,
+        dst_ip.to_bits(),
+        dst_port,
     );
     let connection = Connection {
         state: 2,
-        src_ip,
-        dst_ip,
+        src_ip: src_ip.to_bits(),
+        dst_ip: dst_ip.to_bits(),
         src_port,
         dst_port,
-        protocol: 6,
+        protocol: protocal as u8,
     };
     let ses = Session {
-        src_ip: dst_ip,
+        src_ip: dst_ip.to_bits(),
         src_port: dst_port,
-        protocol: 6,
+        protocol: protocal as u8,
     };
     let tcp_hdr_ref = unsafe { tcp_hdr.as_ref().ok_or(TC_ACT_PIPE)? };
     if tcp_hdr_ref.rst() == 1 {
-        let if_connected = unsafe { CONNECTIONS.get(&ses) };
-        if if_connected.is_some() {
+        if unsafe { CONNECTIONS.get(&ses).is_some() } {
             debug!(&ctx, "Closing {:i}:{} on TCP", ses.src_ip, ses.src_port);
             unsafe { DEL.output(&ctx, &ses, 0) };
         }
     } else {
         unsafe { NEW.output(&ctx, &connection, 0) };
+        // _ = unsafe { CONNECTIONS.insert(&ses, &connection, 0) };
     }
     // Just forward our request outside!!
     Ok(TC_ACT_PIPE)
