@@ -120,7 +120,10 @@ async fn main() -> Result<(), anyhow::Error> {
                     let key = unsafe { &*(event.as_ptr() as *const Connection) };
                     u_connection.insert(key.session(), Instant::now());
                 }
-                let events = del_buf.read_events(&mut buf).await.expect("delete event");
+                let events = del_buf
+                    .read_events(&mut buf_del)
+                    .await
+                    .expect("delete event");
                 for event in buf_del.iter_mut().take(events.read) {
                     let key = unsafe { &*(event.as_ptr() as *const Session) };
                     u_connection.remove(&(*key).session());
