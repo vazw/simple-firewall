@@ -6,7 +6,7 @@ use aya::util::{nr_cpus, online_cpus};
 
 use anyhow::{Context, Ok};
 use aya::maps::{Array, AsyncPerfEventArray, HashMap, PerCpuArray, PerCpuValues};
-use aya::programs::{SchedClassifier, TcAttachType, Xdp, XdpFlags};
+use aya::programs::{tc, SchedClassifier, TcAttachType, Xdp, XdpFlags};
 use aya::{include_bytes_aligned, Bpf};
 use aya_log::BpfLogger;
 use bytes::BytesMut;
@@ -62,17 +62,6 @@ async fn main() -> Result<(), anyhow::Error> {
         warn!("failed to initialize eBPF logger: {}", e);
     }
 
-    info!("Attaching sfw_egress in to network traffic control classifier");
-    let egress_program: &mut SchedClassifier = bpf.program_mut("sfw_egress").unwrap().try_into()?;
-    egress_program.load()?;
-    if egress_program
-        .attach(&opt.iface, TcAttachType::Egress)
-        .is_err()
-    {
-        warn!("failed to initialize sfw_egress");
-        warn!("FALLBACK TO SIMEPLE MODE");
-    }
-
     info!("Attaching sfw into XDP map");
     let program: &mut Xdp = bpf.program_mut("sfw").unwrap().try_into()?;
     program.unload().unwrap_or(());
@@ -87,6 +76,18 @@ async fn main() -> Result<(), anyhow::Error> {
         program.attach(&opt.iface, XdpFlags::SKB_MODE)
             .context("failed to attach the XDP program with default flags - try changing XdpFlags::default() to XdpFlags::SKB_MODE")?;
         info!("XDP SKB_MODE Mode Enabled");
+    }
+
+    info!("Attaching sfw_egress in to network traffic control classifier");
+    _ = tc::qdisc_add_clsact(&opt.iface);
+    let egress_program: &mut SchedClassifier = bpf.program_mut("sfw_egress").unwrap().try_into()?;
+    egress_program.load()?;
+    if egress_program
+        .attach(&opt.iface, TcAttachType::Egress)
+        .is_err()
+    {
+        warn!("failed to initialize sfw_egress");
+        warn!("FALLBACK TO SIMEPLE MODE");
     }
 
     let mut config_len: usize;
@@ -109,20 +110,16 @@ async fn main() -> Result<(), anyhow::Error> {
         let mut perf_buf = perf_array.open(cpu_id, None)?;
         let mut del_buf = delete_array.open(cpu_id, None)?;
         tokio::task::spawn(async move {
-            let mut u_connection: std::collections::HashMap<Session, Instant> =
+            let mut u_connection: std::collections::HashMap<Connection, Instant> =
                 std::collections::HashMap::new();
             let mut buf = vec![BytesMut::with_capacity(1024); 10];
             loop {
                 let events = perf_buf.read_events(&mut buf).await?;
                 for event in buf.iter_mut().take(events.read) {
                     let key = unsafe { &*(event.as_ptr() as *const Connection) };
-                    let sess = Session {
-                        src_ip: key.dst_ip,
-                        src_port: key.dst_port,
-                        protocol: key.protocol,
-                    };
+                    let sess = key.egress_session();
                     add_send.send((sess, *key)).await?;
-                    u_connection.insert(sess, Instant::now());
+                    u_connection.insert(*key, Instant::now());
                 }
                 for k in u_connection.clone().keys() {
                     if let Some(v) = u_connection.get(k) {
@@ -141,7 +138,7 @@ async fn main() -> Result<(), anyhow::Error> {
             loop {
                 let events = del_buf.read_events(&mut buf).await?;
                 for event in buf.iter_mut().take(events.read) {
-                    let key = unsafe { &*(event.as_ptr() as *const Session) };
+                    let key = unsafe { &*(event.as_ptr() as *const Connection) };
                     del_send_2.send(*key).await?;
                 }
             }
@@ -166,25 +163,28 @@ async fn main() -> Result<(), anyhow::Error> {
     //         Ok::<_>(())
     //     });
     // }
+
     _ = tokio::task::spawn(async move {
-        let mut interval_1 = interval(Duration::from_millis(40));
+        let mut interval_1 = interval(Duration::from_millis(50));
         let mut interval_2 = interval(Duration::from_millis(50));
         let mut heart_rate = interval(Duration::from_secs(1));
+        let mut rate_limit: PerCpuArray<_, u32> =
+            PerCpuArray::try_from(bpf.take_map("RATE").expect("get map RATE"))?;
         let mut heart_reset: bool = false;
+        let mut connections: HashMap<_, Session, Connection> =
+            HashMap::try_from(bpf.take_map("CONNECTIONS").unwrap())?;
         loop {
             tokio::select! {
                 _ = interval_1.tick() => {
-                    let mut connections: HashMap<_, Session, Connection> =
-                        HashMap::try_from(bpf.map_mut("CONS").unwrap())?;
                     let con = add_rev.try_recv();
                     if con.is_ok() {
                         let (sess, con) = con.unwrap();
-                        let src_ip = Ipv4Addr::from(con.src_ip);
-                        let dst_ip = Ipv4Addr::from(sess.src_ip);
-                        let protocal = if con.protocol == 6 {"TCP"} else {"UDP"};
-                        if connections.get(&sess,0).is_err() && connections.insert(sess,con,0).is_ok() {
+                        let src_ip = con.src_ip;
+                        let dst_ip = sess.src_ip;
+                        let protocal = con.protocal;
+                        if connections.get(&sess, 0).is_err() && connections.insert(sess , con, 0).is_ok() {
                             info!(
-                                "Bind {} {}:{} --> {}:{}",
+                                "Bind {:?} {}:{} --> {}:{}",
                                 protocal, src_ip, con.src_port, dst_ip, sess.src_port
                             );
                         }
@@ -192,20 +192,23 @@ async fn main() -> Result<(), anyhow::Error> {
                     let con = del_rev.try_recv();
                     if con.is_ok() {
                         let con = con.unwrap();
-                        let protocal = if con.protocol == 6 {"TCP"} else {"UDP"};
                         // Check if connections still exits
-                        if connections.get(&con, 0).is_ok()
-                            && connections.remove(&con).is_ok() {
-                            info!("Closing {}:{} on {}", con.src_ip.to_string(), con.src_port, protocal);
+                        let protocal = if con.protocal == 6 {"TCP"} else {"UDP"};
+                        if connections.remove(&con.egress_session()).is_ok() {
+                            info!("Closing {}:{} on {}", con.dst_ip.to_string(), con.dst_port, protocal);
                         } else {
                         // The connections maybe removed by `rst` signal
                             let mut n = 0;
                             let cons = connections.keys();
-                            for con in cons { if con.is_ok() { n +=1 }; }
+                            for con in cons {
+                                if con.is_ok() {
+                                    n +=1; println!("{:#?}",con);
+                                };
+                            }
                             info!(
                                 "Closed {}:{} on {} total connections: {}",
-                                con.src_ip.to_string(),
-                                con.src_port,
+                                con.dst_ip.to_string(),
+                                con.dst_port,
                                 protocal, n
                             );
                         }
@@ -228,8 +231,6 @@ async fn main() -> Result<(), anyhow::Error> {
                     };
 
                     if heart_reset {
-                        let mut rate_limit: PerCpuArray<_, u32> =
-                            PerCpuArray::try_from(bpf.map_mut("RATE").expect("get map RATE"))?;
                         // let rate = rate_limit.get(&0u32,0);
                         // println!("1s {:?}", rate.unwrap().iter().sum::<u32>());
                         rate_limit.set(0,PerCpuValues::try_from(vec![0u32;nr_cpus()?])?,0)?;
@@ -268,8 +269,6 @@ fn load_config(
     //
     let mut rate_limit: Array<_, u32> = Array::try_from(bpf.map_mut("RATE_LIMIT").unwrap())?;
     rate_limit.set(0, 1000, 0)?;
-    // let mut cpus: Array<_, u32> = Array::try_from(bpf.map_mut("CPUS").unwrap())?;
-    // cpus.set(0, nr_cpus()? as u32, 0)?;
     let mut host: Array<_, u32> = Array::try_from(bpf.map_mut("HOST").unwrap())?;
     host.set(0, u32::from(*host_addr), 0)?;
     for (k, v) in config.iter() {

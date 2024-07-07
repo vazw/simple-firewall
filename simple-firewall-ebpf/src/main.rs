@@ -41,7 +41,7 @@ static mut RATE_LIMIT: Array<u32> = Array::with_max_entries(1, 0);
 #[map(name = "HOST")]
 static mut HOST: Array<u32> = Array::with_max_entries(1, 0);
 
-#[map(name = "CONS")]
+#[map(name = "CONNECTIONS")]
 static mut CONNECTIONS: HashMap<Session, Connection> = HashMap::with_max_entries(512, 0);
 
 #[inline(always)]
@@ -55,14 +55,9 @@ fn ptr_at<T>(ctx: &XdpContext, offset: usize) -> Result<*const T, u32> {
     Ok((start + offset) as *const T)
 }
 
-// fn is_requested(session: &Session) -> bool {
-//     unsafe { CONNECTIONS.get(session).is_some() }
-//     // if let Some(con) = unsafe { CONNECTIONS.get(connection) } {
-//     //     con.eq(connection)
-//     // } else {
-//     //     false
-//     // }
-// }
+fn is_requested(session: &Session) -> bool {
+    unsafe { CONNECTIONS.get(session).is_some() }
+}
 //
 // fn add_request(session: &Session, connection: &Connection) {
 //     if unsafe { CONNECTIONS.get(session).is_none() } {
@@ -150,95 +145,36 @@ fn try_simple_firewall(ctx: XdpContext) -> Result<u32, u32> {
             let protocal = unsafe { (*ipv).proto };
             // let size = unsafe { (*ipv).tot_len };
             match protocal {
-                IpProto::Gre => {
-                    // let header = ptr_at(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?;
-                    info!(&ctx, "GRE tunnelling🥰");
-                    Ok(xdp_action::XDP_PASS)
-                }
-                IpProto::Icmp => {
-                    let header: *const IcmpHdr = ptr_at(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?;
-                    let icmp_type: u8 = unsafe { (*header).type_ };
-                    let icmp_text = match icmp_type {
-                        0 => "ECHO REPLY",
-                        3 => "PORT UNREACH",
-                        8 => "ECHO REQUEST",
-                        11 => "Time OUT",
-                        _ => "{icmp_type}",
-                    };
-                    info!(
-                        &ctx,
-                        "ICMP {} {:i} -> {:i} ",
-                        icmp_text,
-                        src_ip.to_bits(),
-                        dst_ip.to_bits()
-                    );
-                    match icmp_type {
-                        ICMP_ECHO_REQUEST => Ok(xdp_action::XDP_DROP),
-                        ICMP_DEST_UNREACH => Ok(xdp_action::XDP_PASS),
-                        ICMP_ECHO_REPLY => Ok(xdp_action::XDP_PASS),
-                        ICMP_TIME_EXCEEDED => Ok(xdp_action::XDP_PASS),
-                        _ => Ok(xdp_action::XDP_DROP),
-                    }
-                }
                 IpProto::Tcp => {
                     let header: *const TcpHdr = ptr_at(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?;
                     // external port comming from outside
                     let port = u16::from_be(unsafe { (*header).source });
                     // someone reaching to internal port
                     let port_to = u16::from_be(unsafe { (*header).dest });
-                    let session = Session {
+                    let connection = Connection {
+                        state: 2,
                         src_ip: src_ip.to_bits(),
+                        dst_ip: dst_ip.to_bits(),
                         src_port: port,
-                        protocol: protocal as u8,
+                        dst_port: port_to,
+                        protocal: protocal as u8,
                     };
-                    // info!(
-                    //     &ctx,
-                    //     "Session is {:i}:{} {}",
-                    //     session.src_ip.to_bits(),
-                    //     session.src_port,
-                    //     session.protocol
-                    // );
-
-                    if let Some(tcp_hdr_ref) = unsafe { header.as_ref() } {
-                        // info!(
-                        //     &ctx,
-                        //     "con {:i}:{}",
-                        //     connection.src_ip.to_bits(),
-                        //     connection.src_port
-                        // );
-                        // info!(
-                        //     &ctx,
-                        //     "ack {}| cwr {}| ece {}| fin {}| psh {}| rst {}| syn {}| urg{}",
-                        //     tcp_hdr_ref.ack(),
-                        //     tcp_hdr_ref.cwr(),
-                        //     tcp_hdr_ref.ece(),
-                        //     tcp_hdr_ref.fin(),
-                        //     tcp_hdr_ref.psh(),
-                        //     tcp_hdr_ref.rst(),
-                        //     tcp_hdr_ref.syn(),
-                        //     tcp_hdr_ref.urg()
-                        // );
-                        if tcp_hdr_ref.rst() == 1 {
-                            let if_connected = unsafe { CONNECTIONS.get(&session) };
-                            if if_connected.is_some() {
-                                debug!(
-                                    &ctx,
-                                    "Closing {:i}:{} on TCP", session.src_ip, session.src_port
-                                );
-                                _ = unsafe { CONNECTIONS.remove(&session) };
-                                //let it pass
-                                return Ok(xdp_action::XDP_PASS);
-                            }
+                    let session = &connection.ingress_session();
+                    if is_requested(session) {
+                        if unsafe { (*header).rst() == 1 } {
+                            debug!(
+                                &ctx,
+                                "Closing {:i}:{} on TCP", session.src_ip, session.src_port
+                            );
+                            _ = unsafe { CONNECTIONS.remove(session) };
                         }
-                    };
-                    if let Some(con) = unsafe { CONNECTIONS.get(&session) } {
                         info!(
                             &ctx,
                             "ESTABLISHED on TCP : {:i}:{} - {:i}:{}",
-                            con.src_ip,
-                            con.src_port,
-                            con.dst_ip,
-                            con.dst_port
+                            src_ip.to_bits(),
+                            port,
+                            dst_ip.to_bits(),
+                            port_to
                         );
                         Ok(xdp_action::XDP_PASS)
                     } else if tcp_port_allowed_in(&port) || tcp_port_allowed_out(&port_to) {
@@ -271,15 +207,18 @@ fn try_simple_firewall(ctx: XdpContext) -> Result<u32, u32> {
                     let port = u16::from_be(unsafe { (*header).source });
                     // someone reaching to internal port
                     let port_to = u16::from_be(unsafe { (*header).dest });
-                    let session = Session {
+                    let connection = Connection {
+                        state: 2,
                         src_ip: src_ip.to_bits(),
+                        dst_ip: dst_ip.to_bits(),
                         src_port: port,
-                        protocol: protocal as u8,
+                        dst_port: port_to,
+                        protocal: protocal as u8,
                     };
-
-                    if unsafe { CONNECTIONS.get(&session).is_some() } {
+                    let session = &connection.ingress_session();
+                    if is_requested(session) {
                         rate_add();
-                        debug!(
+                        info!(
                             &ctx,
                             "UDP ESTABLISHED on {:i}:{}", session.src_ip, session.src_port
                         );
@@ -348,9 +287,40 @@ fn try_simple_firewall(ctx: XdpContext) -> Result<u32, u32> {
                         return Ok(xdp_action::XDP_DROP);
                     }
                 }
+                IpProto::Gre => {
+                    // let header = ptr_at(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?;
+                    info!(&ctx, "GRE tunnelling🥰");
+                    Ok(xdp_action::XDP_PASS)
+                }
+                IpProto::Icmp => {
+                    let header: *const IcmpHdr = ptr_at(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?;
+                    let icmp_type: u8 = unsafe { (*header).type_ };
+                    let icmp_text = match icmp_type {
+                        0 => "ECHO REPLY",
+                        3 => "PORT UNREACH",
+                        8 => "ECHO REQUEST",
+                        11 => "Time OUT",
+                        _ => "{icmp_type}",
+                    };
+                    info!(
+                        &ctx,
+                        "ICMP {} {:i} -> {:i} ",
+                        icmp_text,
+                        src_ip.to_bits(),
+                        dst_ip.to_bits()
+                    );
+                    match icmp_type {
+                        ICMP_ECHO_REQUEST => Ok(xdp_action::XDP_DROP),
+                        ICMP_DEST_UNREACH => Ok(xdp_action::XDP_PASS),
+                        ICMP_ECHO_REPLY => Ok(xdp_action::XDP_PASS),
+                        ICMP_TIME_EXCEEDED => Ok(xdp_action::XDP_PASS),
+                        _ => Ok(xdp_action::XDP_DROP),
+                    }
+                }
                 _ => Ok(xdp_action::XDP_PASS),
             }
         }
+        // EtherType
         _ => Ok(xdp_action::XDP_PASS),
     }
 }
@@ -376,7 +346,7 @@ unsafe fn ptr_mut<T>(ctx: &TcContext, offset: usize) -> Result<*mut T, i32> {
 #[map(name = "NEW")]
 static mut NEW: PerfEventArray<Connection> = PerfEventArray::with_max_entries(1024, 0);
 #[map(name = "DEL")]
-static mut DEL: PerfEventArray<Session> = PerfEventArray::with_max_entries(1024, 0);
+static mut DEL: PerfEventArray<Connection> = PerfEventArray::with_max_entries(1024, 0);
 
 #[classifier]
 pub fn sfw_egress(ctx: TcContext) -> i32 {
@@ -430,7 +400,7 @@ pub fn handle_udp_egress(ctx: TcContext) -> Result<i32, i32> {
         dst_ip: dst_ip.to_bits(),
         src_port,
         dst_port,
-        protocol: protocal as u8,
+        protocal: protocal as u8,
     };
     // let ses = Session {
     //     src_ip: dst_ip,
@@ -471,18 +441,14 @@ pub fn handle_tcp_egress(ctx: TcContext) -> Result<i32, i32> {
         dst_ip: dst_ip.to_bits(),
         src_port,
         dst_port,
-        protocol: protocal as u8,
+        protocal: protocal as u8,
     };
-    let ses = Session {
-        src_ip: dst_ip.to_bits(),
-        src_port: dst_port,
-        protocol: protocal as u8,
-    };
+    let ses = &connection.egress_session();
     let tcp_hdr_ref = unsafe { tcp_hdr.as_ref().ok_or(TC_ACT_PIPE)? };
     if tcp_hdr_ref.rst() == 1 {
-        if unsafe { CONNECTIONS.get(&ses).is_some() } {
+        if unsafe { CONNECTIONS.get(ses).is_some() } {
             debug!(&ctx, "Closing {:i}:{} on TCP", ses.src_ip, ses.src_port);
-            unsafe { DEL.output(&ctx, &ses, 0) };
+            unsafe { DEL.output(&ctx, &connection, 0) };
         }
     } else {
         unsafe { NEW.output(&ctx, &connection, 0) };

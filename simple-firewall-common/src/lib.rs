@@ -1,6 +1,5 @@
 #![no_std]
 
-// Connection that we requested to outside world
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Connection {
     pub state: u8,
@@ -8,23 +7,23 @@ pub struct Connection {
     pub dst_ip: u32,
     pub src_port: u16,
     pub dst_port: u16,
-    pub protocol: u8,
+    pub protocal: u8,
 }
 
 #[cfg(feature = "user")]
 unsafe impl aya::Pod for Connection {}
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug)]
 pub struct Session {
     pub src_ip: u32,
     pub src_port: u16,
-    pub protocol: u8,
+    pub protocal: u8,
 }
 
 #[cfg(feature = "user")]
 unsafe impl aya::Pod for Session {}
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug)]
 pub struct IcmpPacket {
     pub src_ip: u32,
     pub dst_ip: u32,
@@ -32,3 +31,20 @@ pub struct IcmpPacket {
 }
 #[cfg(feature = "user")]
 unsafe impl aya::Pod for IcmpPacket {}
+
+impl Connection {
+    pub fn egress_session(self: &Self) -> Session {
+        Session {
+            src_ip: self.dst_ip,
+            src_port: self.dst_port,
+            protocal: self.protocal,
+        }
+    }
+    pub fn ingress_session(self: &Self) -> Session {
+        Session {
+            src_ip: self.src_ip,
+            src_port: self.dst_port,
+            protocal: self.protocal,
+        }
+    }
+}
