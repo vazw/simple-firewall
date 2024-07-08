@@ -167,7 +167,7 @@ async fn main() -> Result<(), anyhow::Error> {
         let mut rate_limit: PerCpuArray<_, u32> =
             PerCpuArray::try_from(bpf.take_map("RATE").expect("get map RATE"))?;
         let mut heart_reset: bool = false;
-        let mut connections: HashMap<_, Session, Connection> =
+        let mut connections: HashMap<_, Session, u32> =
             HashMap::try_from(bpf.take_map("CONNECTIONS").unwrap())?;
         loop {
             tokio::select! {

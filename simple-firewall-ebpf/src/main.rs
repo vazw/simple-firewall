@@ -23,8 +23,10 @@ use network_types::{
 };
 use simple_firewall_common::{Connection, Session};
 
+const PROTOCAL_OFFSET: usize = EthHdr::LEN + Ipv4Hdr::LEN;
+
 #[map(name = "CONNECTIONS")]
-static mut CONNECTIONS: HashMap<Session, Connection> = HashMap::with_max_entries(512, 0);
+static mut CONNECTIONS: HashMap<Session, u32> = HashMap::with_max_entries(512, 0);
 
 #[map(name = "IAP")]
 static mut IAP: HashMap<u16, u16> = HashMap::with_max_entries(24, 0);
@@ -64,9 +66,9 @@ fn is_requested(session: &Session) -> bool {
     unsafe { CONNECTIONS.get(session).is_some() }
 }
 
-fn add_request(session: &Session, connection: &Connection) {
+fn add_request(session: &Session) {
     unsafe {
-        let _ = CONNECTIONS.insert(session, connection, 0);
+        let _ = CONNECTIONS.insert(session, &0u32, 0);
     }
 }
 
@@ -174,7 +176,7 @@ fn handle_tcp_xdp(
     dst_ip: Ipv4Addr,
     protocal: IpProto,
 ) -> Result<u32, u32> {
-    let header: *const TcpHdr = ptr_at(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?;
+    let header: *const TcpHdr = ptr_at(&ctx, PROTOCAL_OFFSET)?;
     // external port comming from outside
     let port = u16::from_be(unsafe { (*header).source });
     // someone reaching to internal port
@@ -233,7 +235,7 @@ fn handle_udp_xdp(
     dst_ip: Ipv4Addr,
     protocal: IpProto,
 ) -> Result<u32, u32> {
-    let header: *const UdpHdr = ptr_at(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?;
+    let header: *const UdpHdr = ptr_at(&ctx, PROTOCAL_OFFSET)?;
     // external port comming from outside
     let port = u16::from_be(unsafe { (*header).source });
     // Allow to acsess is_broadcast request
@@ -282,7 +284,7 @@ fn handle_udp_xdp(
         //     id,
         // );
         Ok(xdp_action::XDP_PASS)
-    } else if udp_port_allowed_in(&port) {
+    } else if udp_port_allowed_in(&port_to) {
         if !rate_limit() {
             rate_add();
             debug!(
@@ -319,7 +321,7 @@ fn handle_udp_xdp(
 }
 
 fn handle_icmp_xdp(ctx: XdpContext, src_ip: Ipv4Addr, dst_ip: Ipv4Addr) -> Result<u32, u32> {
-    let header: *const IcmpHdr = ptr_at(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?;
+    let header: *const IcmpHdr = ptr_at(&ctx, PROTOCAL_OFFSET)?;
     let icmp_type: u8 = unsafe { (*header).type_ };
     let icmp_text = match icmp_type {
         0 => "ECHO REPLY",
@@ -345,22 +347,32 @@ fn handle_icmp_xdp(ctx: XdpContext, src_ip: Ipv4Addr, dst_ip: Ipv4Addr) -> Resul
 }
 
 use aya_ebpf::{
-    bindings::{TC_ACT_PIPE, TC_ACT_SHOT},
+    bindings::{TC_ACT_OK, TC_ACT_PIPE, TC_ACT_SHOT},
     macros::classifier,
     programs::TcContext,
 };
 
 #[inline(always)]
-unsafe fn ptr_mut<T>(ctx: &TcContext, offset: usize) -> Result<*mut T, i32> {
+unsafe fn tc_ptr_at<T>(ctx: &TcContext, offset: usize) -> Result<*const T, i32> {
     let start = ctx.data();
     let end = ctx.data_end();
     let len = mem::size_of::<T>();
-
     if start + offset + len > end {
-        return Err(TC_ACT_SHOT);
+        return Err(TC_ACT_PIPE);
     }
-    Ok((start + offset) as *mut T)
+    Ok((start + offset) as *const T)
 }
+
+// #[inline(always)]
+// unsafe fn ptr_mut<T>(ctx: &TcContext, offset: usize) -> Result<*mut T, i32> {
+//     let start = ctx.data();
+//     let end = ctx.data_end();
+//     let len = mem::size_of::<T>();
+//     if start + offset + len > end {
+//         return Err(TC_ACT_PIPE);
+//     }
+//     Ok((start + offset) as *mut T)
+// }
 
 #[classifier]
 pub fn sfw_egress(ctx: TcContext) -> i32 {
@@ -371,14 +383,17 @@ pub fn sfw_egress(ctx: TcContext) -> i32 {
 }
 
 fn try_tc_egress(ctx: TcContext) -> Result<i32, i32> {
-    let eth_hdr: *const EthHdr = unsafe { ptr_mut(&ctx, 0) }?;
+    let eth_hdr: *const EthHdr = unsafe { tc_ptr_at(&ctx, 0) }?;
     match unsafe { *eth_hdr }.ether_type {
         EtherType::Ipv4 => {
-            let ipv4hdr: *mut Ipv4Hdr = unsafe { ptr_mut(&ctx, EthHdr::LEN)? };
+            let ipv4hdr: *const Ipv4Hdr = unsafe { tc_ptr_at(&ctx, EthHdr::LEN)? };
+            let src_ip = unsafe { (*ipv4hdr).src_addr() };
+            let dst_ip = unsafe { (*ipv4hdr).dst_addr() };
+            let protocal = unsafe { (*ipv4hdr).proto };
             match unsafe { *ipv4hdr }.proto {
-                IpProto::Icmp => handle_icmp_egress(ctx),
-                IpProto::Tcp => handle_tcp_egress(ctx),
-                IpProto::Udp => handle_udp_egress(ctx),
+                IpProto::Icmp => handle_icmp_egress(ctx, src_ip, dst_ip, protocal),
+                IpProto::Tcp => handle_tcp_egress(ctx, src_ip, dst_ip, protocal),
+                IpProto::Udp => handle_udp_egress(ctx, src_ip, dst_ip, protocal),
                 _ => Ok(TC_ACT_PIPE),
             }
         }
@@ -386,19 +401,14 @@ fn try_tc_egress(ctx: TcContext) -> Result<i32, i32> {
     }
 }
 
-pub fn handle_udp_egress(ctx: TcContext) -> Result<i32, i32> {
-    // gather the TCP header
-    let ip_hdr: *mut Ipv4Hdr = unsafe { ptr_mut(&ctx, EthHdr::LEN)? };
-    let protocal = unsafe { (*ip_hdr).proto };
-    // let size = unsafe { (*ip_hdr).tot_len };
-
-    let udp_header_offset = EthHdr::LEN + Ipv4Hdr::LEN;
-
-    let udp_hdr: *mut UdpHdr = unsafe { ptr_mut(&ctx, udp_header_offset)? };
-
-    let src_ip = unsafe { (*ip_hdr).src_addr() };
+pub fn handle_udp_egress(
+    ctx: TcContext,
+    src_ip: Ipv4Addr,
+    dst_ip: Ipv4Addr,
+    protocal: IpProto,
+) -> Result<i32, i32> {
+    let udp_hdr: *const UdpHdr = unsafe { tc_ptr_at(&ctx, PROTOCAL_OFFSET)? };
     let src_port = u16::from_be(unsafe { (*udp_hdr).source });
-    let dst_ip = unsafe { (*ip_hdr).dst_addr() };
     let dst_port = u16::from_be(unsafe { (*udp_hdr).dest });
     if dst_ip.is_broadcast() {
         _ = unsafe { TEMPORT.insert(&dst_port, &0u8, 0) };
@@ -419,10 +429,21 @@ pub fn handle_udp_egress(ctx: TcContext) -> Result<i32, i32> {
     // };
     let session = &connection.egress_session();
     unsafe { NEW.output(&ctx, &connection, 0) };
-    if udp_port_allowed_out(&src_port) {
+    if dst_port == 53 && ip_addr_allowed(&dst_ip.to_bits()) {
+        // DNS Reslover let her in
+        // add_request(&connection.ingress_session(), &connection);
         debug!(
             &ctx,
-            "UDP OUT! {:i}:{} ===> {:i}:{}",
+            "DNS! {:i}:{} ==> {:i}:{}",
+            src_ip.to_bits(),
+            src_port,
+            dst_ip.to_bits(),
+            dst_port
+        );
+    } else if udp_port_allowed_out(&dst_port) {
+        debug!(
+            &ctx,
+            "UDP OUT! {:i}:{} ==> {:i}:{}",
             src_ip.to_bits(),
             src_port,
             dst_ip.to_bits(),
@@ -437,26 +458,25 @@ pub fn handle_udp_egress(ctx: TcContext) -> Result<i32, i32> {
                 dst_ip.to_bits(),
                 dst_port,
             );
-            add_request(session, &connection);
+            add_request(session);
         }
+        // } else {
+        //     Ok(TC_ACT_SHOT)
     }
     // Just forward our request outside!!
     Ok(TC_ACT_PIPE)
 }
 
-pub fn handle_tcp_egress(ctx: TcContext) -> Result<i32, i32> {
+pub fn handle_tcp_egress(
+    ctx: TcContext,
+    src_ip: Ipv4Addr,
+    dst_ip: Ipv4Addr,
+    protocal: IpProto,
+) -> Result<i32, i32> {
     // gather the TCP header
-    let ip_hdr: *mut Ipv4Hdr = unsafe { ptr_mut(&ctx, EthHdr::LEN)? };
-    let protocal = unsafe { (*ip_hdr).proto };
     // let size = unsafe { (*ip_hdr).tot_len };
-
-    let tcp_header_offset = EthHdr::LEN + Ipv4Hdr::LEN;
-
-    let tcp_hdr: *mut TcpHdr = unsafe { ptr_mut(&ctx, tcp_header_offset)? };
-
-    let src_ip = unsafe { (*ip_hdr).src_addr() };
+    let tcp_hdr: *const TcpHdr = unsafe { tc_ptr_at(&ctx, PROTOCAL_OFFSET)? };
     let src_port = u16::from_be(unsafe { (*tcp_hdr).source });
-    let dst_ip = unsafe { (*ip_hdr).dst_addr() };
     let dst_port = u16::from_be(unsafe { (*tcp_hdr).dest });
     // The source identifier
     let connection = Connection {
@@ -488,33 +508,39 @@ pub fn handle_tcp_egress(ctx: TcContext) -> Result<i32, i32> {
                 dst_ip.to_bits(),
                 dst_port,
             );
-            add_request(ses, &connection);
+            add_request(ses);
         }
     }
-    // Just forward our request outside!!
-    debug!(
-        &ctx,
-        "TCP {:i}:{} ===> {:i}:{}",
-        src_ip.to_bits(),
-        src_port,
-        dst_ip.to_bits(),
-        dst_port
-    );
     Ok(TC_ACT_PIPE)
+    // } else {
+    //     info!(
+    //         &ctx,
+    //         "Not alloed {:i}:{} -x- {:i}:{}",
+    //         src_ip.to_bits(),
+    //         src_port,
+    //         dst_ip.to_bits(),
+    //         dst_port,
+    //     );
+    //     Ok(TC_ACT_SHOT)
+    // }
 }
 
-pub fn handle_icmp_egress(ctx: TcContext) -> Result<i32, i32> {
-    let ip_hdr: *mut Ipv4Hdr = unsafe { ptr_mut(&ctx, EthHdr::LEN)? };
-
-    let icmp_header_offset = EthHdr::LEN + Ipv4Hdr::LEN;
-
-    let icmp_hdr: *mut IcmpHdr = unsafe { ptr_mut(&ctx, icmp_header_offset)? };
+pub fn handle_icmp_egress(
+    ctx: TcContext,
+    src_ip: Ipv4Addr,
+    dst_ip: Ipv4Addr,
+    _: IpProto,
+) -> Result<i32, i32> {
+    let icmp_hdr: *const IcmpHdr = unsafe { tc_ptr_at(&ctx, PROTOCAL_OFFSET)? };
     let icmp_type: u8 = unsafe { (*icmp_hdr).type_ };
 
-    let src_ip = u32::from_be(unsafe { (*ip_hdr).src_addr });
-    let dst_ip = u32::from_be(unsafe { (*ip_hdr).dst_addr });
-
-    debug!(&ctx, "ICMP {} {:i} -> {:i} ", icmp_type, src_ip, dst_ip);
+    debug!(
+        &ctx,
+        "ICMP {} {:i} -> {:i} ",
+        icmp_type,
+        src_ip.to_bits(),
+        dst_ip.to_bits()
+    );
 
     Ok(TC_ACT_PIPE)
 }
