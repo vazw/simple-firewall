@@ -21,7 +21,7 @@ use simple_firewall_common::{Connection, Session};
 const PROTOCAL_OFFSET: usize = EthHdr::LEN + Ipv4Hdr::LEN;
 
 #[map(name = "CONNECTIONS")]
-static mut CONNECTIONS: HashMap<Session, u32> = HashMap::with_max_entries(512, 0);
+static mut CONNECTIONS: HashMap<u64, u32> = HashMap::with_max_entries(512, 0);
 
 #[map(name = "IAP")]
 static mut IAP: HashMap<u16, u16> = HashMap::with_max_entries(24, 0);
@@ -57,28 +57,39 @@ unsafe fn ptr_at<T>(ctx: &XdpContext, offset: usize) -> Result<&T, u32> {
     Ok(data_)
 }
 
-fn is_requested(session: &Session) -> bool {
+#[inline(always)]
+fn is_requested(session: &u64) -> bool {
     unsafe { CONNECTIONS.get(session).is_some() }
 }
 
-fn add_request(session: &Session) {
+#[inline(always)]
+fn add_request(session: &u64) {
     unsafe {
         let _ = CONNECTIONS.insert(session, &0u32, 0);
     }
 }
 
+#[inline(always)]
 fn tcp_port_allowed_in(port: &u16) -> bool {
     unsafe { IAP.get(port).is_some() }
 }
+
+#[inline(always)]
 fn tcp_port_allowed_out(port: &u16) -> bool {
     unsafe { OAP.get(port).is_some() }
 }
+
+#[inline(always)]
 fn udp_port_allowed_in(port: &u16) -> bool {
     unsafe { UDP_IAP.get(port).is_some() }
 }
+
+#[inline(always)]
 fn udp_port_allowed_out(port: &u16) -> bool {
     unsafe { UDP_OAP.get(port).is_some() }
 }
+
+#[inline(always)]
 fn ip_addr_allowed(addrs: &u32) -> bool {
     unsafe { ALLST.get(addrs).is_some() }
 }
@@ -146,7 +157,7 @@ fn handle_tcp_xdp(
         protocal: protocal as u8,
     };
     let session = &connection.ingress_session();
-    if is_requested(session) {
+    if is_requested(&session.to_u64()) {
         debug!(
             &ctx,
             "ESTABLISHED on TCP with {:i}:{}",
@@ -158,7 +169,7 @@ fn handle_tcp_xdp(
                 &ctx,
                 "Closing {:i}:{} on TCP", session.src_ip, session.src_port
             );
-            _ = unsafe { CONNECTIONS.remove(session) };
+            _ = unsafe { CONNECTIONS.remove(&session.to_u64()) };
             unsafe { DEL.output(&ctx, session, 0) };
         }
         Ok(xdp_action::XDP_PASS)
@@ -210,7 +221,7 @@ fn handle_udp_xdp(
         protocal: protocal as u8,
     };
     let session = &connection.ingress_session();
-    if is_requested(session) {
+    if is_requested(&session.to_u64()) {
         debug!(
             &ctx,
             "UDP ESTABLISHED on {:i}:{}", session.src_ip, session.src_port
@@ -389,7 +400,7 @@ pub fn handle_udp_egress(
             dst_ip.to_bits(),
             dst_port
         );
-        if !is_requested(session) {
+        if !is_requested(&session.to_u64()) {
             info!(
                 &ctx,
                 "UDP Bind {:i}:{} -> {:i}:{}",
@@ -398,7 +409,7 @@ pub fn handle_udp_egress(
                 dst_ip.to_bits(),
                 dst_port,
             );
-            add_request(session);
+            add_request(&session.to_u64());
         }
         // } else {
         //     Ok(TC_ACT_SHOT)
@@ -430,16 +441,16 @@ pub fn handle_tcp_egress(
     let ses = &connection.egress_session();
     // Maybe here??
     if tcp_hdr.rst() == 1 {
-        if unsafe { CONNECTIONS.get(ses).is_some() } {
+        if unsafe { CONNECTIONS.get(&ses.to_u64()).is_some() } {
             info!(&ctx, "Closing {:i}:{} on TCP", ses.src_ip, ses.src_port);
             // unsafe { DEL.output(&ctx, &connection, 0) };
-            _ = unsafe { CONNECTIONS.remove(ses) };
+            _ = unsafe { CONNECTIONS.remove(&ses.to_u64()) };
             unsafe { DEL.output(&ctx, ses, 0) };
         }
     } else if tcp_port_allowed_out(&dst_port) {
         // add_request(&session, &connection);
         unsafe { NEW.output(&ctx, &connection, 0) };
-        if !is_requested(ses) {
+        if !is_requested(&ses.to_u64()) {
             info!(
                 &ctx,
                 "TCP Bind {:i}:{} -> {:i}:{}",
@@ -448,7 +459,7 @@ pub fn handle_tcp_egress(
                 dst_ip.to_bits(),
                 dst_port,
             );
-            add_request(ses);
+            add_request(&ses.to_u64());
         }
     }
     Ok(TC_ACT_PIPE)

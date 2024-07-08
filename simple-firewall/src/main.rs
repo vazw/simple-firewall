@@ -167,7 +167,7 @@ async fn main() -> Result<(), anyhow::Error> {
         // let mut rate_limit: PerCpuArray<_, u32> =
         //     PerCpuArray::try_from(bpf.take_map("RATE").expect("get map RATE"))?;
         let mut heart_reset: bool = false;
-        let mut connections: HashMap<_, Session, u32> =
+        let mut connections: HashMap<_, u64, u32> =
             HashMap::try_from(bpf.take_map("CONNECTIONS").unwrap())?;
         loop {
             tokio::select! {
@@ -178,7 +178,7 @@ async fn main() -> Result<(), anyhow::Error> {
                         // Check if connections still exits
                         let src_ip = Ipv4Addr::from(session.src_ip);
                         let protocal = if session.protocal == 6 {"TCP"} else {"UDP"};
-                        if connections.remove(&session.session()).is_ok() {
+                        if connections.remove(&session.session().to_u64()).is_ok() {
                             info!("Closing {} on {}:{}", protocal, src_ip.to_string(), session.src_port);
                         } else {
                         // The connections maybe removed by `rst` signal

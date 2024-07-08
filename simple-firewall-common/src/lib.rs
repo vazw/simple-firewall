@@ -1,4 +1,5 @@
 #![no_std]
+use core::mem;
 
 #[derive(Clone, Copy, Hash)]
 pub struct Connection {
@@ -13,11 +14,13 @@ pub struct Connection {
 #[cfg(feature = "user")]
 unsafe impl aya::Pod for Connection {}
 
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
 pub struct Session {
     pub src_ip: u32,
     pub src_port: u16,
     pub protocal: u8,
+    pub _padding: u8,
 }
 
 #[cfg(feature = "user")]
@@ -48,6 +51,7 @@ impl SessionKey {
             src_ip: self.src_ip,
             src_port: self.src_port,
             protocal: self.protocal,
+            _padding: 0,
         }
     }
 }
@@ -58,6 +62,9 @@ impl Session {
             src_port: self.src_port,
             protocal: self.protocal,
         }
+    }
+    pub fn to_u64(&self) -> u64 {
+        unsafe { mem::transmute::<Session, u64>(*self) }
     }
 }
 
@@ -74,6 +81,7 @@ impl Connection {
             src_ip: self.dst_ip,
             src_port: self.dst_port,
             protocal: self.protocal,
+            _padding: 0,
         }
     }
     pub fn ingress_session(self: &Self) -> Session {
@@ -81,6 +89,7 @@ impl Connection {
             src_ip: self.src_ip,
             src_port: self.src_port,
             protocal: self.protocal,
+            _padding: 0,
         }
     }
     pub fn into_egress_connection(self: &Self) -> Connection {
