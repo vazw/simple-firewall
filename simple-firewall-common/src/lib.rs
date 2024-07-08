@@ -21,7 +21,7 @@ pub struct Session {
     pub src_ip: u32,
     pub src_port: u16,
     pub protocal: u8,
-    pub _padding: u8,
+    _padding: u8,
 }
 
 #[cfg(feature = "user")]
@@ -32,6 +32,7 @@ pub struct SessionKey {
     pub src_ip: u32,
     pub src_port: u16,
     pub protocal: u8,
+    _padding: u8,
 }
 
 #[cfg(feature = "user")]
@@ -52,7 +53,7 @@ impl SessionKey {
             src_ip: self.src_ip,
             src_port: self.src_port,
             protocal: self.protocal,
-            _padding: 0,
+            _padding: self._padding,
         }
     }
 }
@@ -62,6 +63,7 @@ impl Session {
             src_ip: self.src_ip,
             src_port: self.src_port,
             protocal: self.protocal,
+            _padding: self._padding,
         }
     }
     pub fn to_u64(&self) -> u64 {
@@ -75,6 +77,7 @@ impl Connection {
             src_ip: self.dst_ip,
             src_port: self.dst_port,
             protocal: self.protocal,
+            _padding: self._padding[0],
         }
     }
     pub fn egress_session(self: &Self) -> Session {
