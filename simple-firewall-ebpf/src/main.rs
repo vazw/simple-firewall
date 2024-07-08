@@ -1,19 +1,14 @@
 #![no_std]
 #![no_main]
 
-mod cpus;
-use cpus::CPUS;
-
 use aya_ebpf::{
     bindings::xdp_action,
-    cty::c_void,
-    helpers::bpf_map_lookup_percpu_elem,
     macros::{map, xdp},
-    maps::{Array, HashMap, PerCpuArray, PerfEventArray},
+    maps::{Array, HashMap, PerfEventArray},
     programs::XdpContext,
 };
 use aya_log_ebpf::{debug, info};
-use core::{mem, net::Ipv4Addr, ptr::addr_of_mut};
+use core::{mem, net::Ipv4Addr};
 use network_types::{
     eth::{EthHdr, EtherType},
     icmp::IcmpHdr,
@@ -38,12 +33,10 @@ static mut OAP: HashMap<u16, u16> = HashMap::with_max_entries(24, 0);
 static mut UDP_OAP: HashMap<u16, u16> = HashMap::with_max_entries(24, 0);
 #[map(name = "ALLST")]
 static mut ALLST: HashMap<u32, u32> = HashMap::with_max_entries(24, 0);
+
 #[map(name = "TEMPORT")]
 static mut TEMPORT: HashMap<u16, u8> = HashMap::with_max_entries(8, 0);
-#[map(name = "RATE")]
-static mut RATE: PerCpuArray<u32> = PerCpuArray::with_max_entries(1, 0);
-#[map(name = "RATE_LIMIT")]
-static mut RATE_LIMIT: Array<u32> = Array::with_max_entries(1, 0);
+
 #[map(name = "NEW")]
 static mut NEW: PerfEventArray<Connection> = PerfEventArray::with_max_entries(1600, 0);
 #[map(name = "DEL")]
@@ -72,23 +65,6 @@ fn add_request(session: &Session) {
     }
 }
 
-fn rate_add() {
-    if let Some(counter) = unsafe { RATE.get_ptr_mut(0) } {
-        unsafe {
-            *counter += 1;
-        }
-    }
-}
-
-fn rate_limit() -> bool {
-    if let Some(rate) = unsafe { RATE_LIMIT.get(0) } {
-        let all_rate = get_total_cpu_counter();
-        all_rate.ge(rate)
-    } else {
-        true
-    }
-}
-
 fn tcp_port_allowed_in(port: &u16) -> bool {
     unsafe { IAP.get(port).is_some() }
 }
@@ -103,28 +79,6 @@ fn udp_port_allowed_out(port: &u16) -> bool {
 }
 fn ip_addr_allowed(addrs: &u32) -> bool {
     unsafe { ALLST.get(addrs).is_some() }
-}
-
-#[inline(always)]
-fn get_total_cpu_counter() -> u32 {
-    let mut sum: u32 = 0;
-    for cpu in 0..CPUS {
-        let c = unsafe {
-            bpf_map_lookup_percpu_elem(
-                addr_of_mut!(RATE) as *mut _ as *mut c_void,
-                &0 as *const _ as *const c_void,
-                cpu,
-            )
-        };
-
-        if !c.is_null() {
-            unsafe {
-                let counter = &mut *(c as *mut u32);
-                sum += *counter;
-            }
-        }
-    }
-    sum
 }
 
 const ICMP_ECHO_REPLY: u8 = 0;
@@ -255,7 +209,6 @@ fn handle_udp_xdp(
     };
     let session = &connection.ingress_session();
     if is_requested(session) {
-        rate_add();
         debug!(
             &ctx,
             "UDP ESTABLISHED on {:i}:{}", session.src_ip, session.src_port
@@ -285,28 +238,15 @@ fn handle_udp_xdp(
         // );
         Ok(xdp_action::XDP_PASS)
     } else if udp_port_allowed_in(&port_to) {
-        if !rate_limit() {
-            rate_add();
-            debug!(
-                &ctx,
-                "UDP IN! {:i}:{} <=== {:i}:{}",
-                dst_ip.to_bits(),
-                port_to,
-                src_ip.to_bits(),
-                port,
-            );
-            return Ok(xdp_action::XDP_PASS);
-        } else {
-            debug!(
-                &ctx,
-                "RATE LIMITTED! {:i}:{} -x-> {:i}:{}",
-                src_ip.to_bits(),
-                port,
-                dst_ip.to_bits(),
-                port_to
-            );
-            return Ok(xdp_action::XDP_DROP);
-        }
+        debug!(
+            &ctx,
+            "UDP IN! {:i}:{} <=== {:i}:{}",
+            dst_ip.to_bits(),
+            port_to,
+            src_ip.to_bits(),
+            port,
+        );
+        return Ok(xdp_action::XDP_PASS);
     } else {
         debug!(
             &ctx,
@@ -346,11 +286,7 @@ fn handle_icmp_xdp(ctx: XdpContext, src_ip: Ipv4Addr, dst_ip: Ipv4Addr) -> Resul
     }
 }
 
-use aya_ebpf::{
-    bindings::{TC_ACT_OK, TC_ACT_PIPE, TC_ACT_SHOT},
-    macros::classifier,
-    programs::TcContext,
-};
+use aya_ebpf::{bindings::TC_ACT_PIPE, macros::classifier, programs::TcContext};
 
 #[inline(always)]
 unsafe fn tc_ptr_at<T>(ctx: &TcContext, offset: usize) -> Result<*const T, i32> {
@@ -488,6 +424,7 @@ pub fn handle_tcp_egress(
         protocal: protocal as u8,
     };
     let ses = &connection.egress_session();
+    // Maybe here??
     let tcp_hdr_ref = unsafe { tcp_hdr.as_ref().ok_or(TC_ACT_PIPE)? };
     if tcp_hdr_ref.rst() == 1 {
         if unsafe { CONNECTIONS.get(ses).is_some() } {

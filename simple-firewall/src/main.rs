@@ -2,10 +2,10 @@
 use std::net::Ipv4Addr;
 use std::str::FromStr;
 
-use aya::util::{nr_cpus, online_cpus};
+use aya::util::online_cpus;
 
 use anyhow::{Context, Ok};
-use aya::maps::{Array, AsyncPerfEventArray, HashMap, PerCpuArray, PerCpuValues};
+use aya::maps::{Array, AsyncPerfEventArray, HashMap};
 use aya::programs::{tc, SchedClassifier, TcAttachType, Xdp, XdpFlags};
 use aya::{include_bytes_aligned, Bpf};
 use aya_log::BpfLogger;
@@ -162,10 +162,10 @@ async fn main() -> Result<(), anyhow::Error> {
 
     _ = tokio::task::spawn(async move {
         let mut interval_1 = interval(Duration::from_millis(1000));
-        let mut interval_2 = interval(Duration::from_millis(250));
+        let mut interval_2 = interval(Duration::from_millis(10));
         let mut heart_rate = interval(Duration::from_secs(1));
-        let mut rate_limit: PerCpuArray<_, u32> =
-            PerCpuArray::try_from(bpf.take_map("RATE").expect("get map RATE"))?;
+        // let mut rate_limit: PerCpuArray<_, u32> =
+        //     PerCpuArray::try_from(bpf.take_map("RATE").expect("get map RATE"))?;
         let mut heart_reset: bool = false;
         let mut connections: HashMap<_, Session, u32> =
             HashMap::try_from(bpf.take_map("CONNECTIONS").unwrap())?;
@@ -200,7 +200,7 @@ async fn main() -> Result<(), anyhow::Error> {
                     };
 
                     if heart_reset {
-                        rate_limit.set(0,PerCpuValues::try_from(vec![0u32;nr_cpus()?])?,0)?;
+                        // rate_limit.set(0,PerCpuValues::try_from(vec![0u32;nr_cpus()?])?,0)?;
                         heart_reset = false;
                     }
 
@@ -224,10 +224,6 @@ fn load_config(
     host_addr: &Ipv4Addr,
 ) -> Result<(), anyhow::Error> {
     info!("Listening on {} IP: {}", &opt.iface, &host_addr.to_string());
-    // Clear mem first
-    //
-    let mut rate_limit: Array<_, u32> = Array::try_from(bpf.map_mut("RATE_LIMIT").unwrap())?;
-    rate_limit.set(0, 1000, 0)?;
     let mut host: Array<_, u32> = Array::try_from(bpf.map_mut("HOST").unwrap())?;
     host.set(0, u32::from(*host_addr), 0)?;
     for (k, v) in config.iter() {
