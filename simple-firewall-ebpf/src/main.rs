@@ -155,6 +155,7 @@ fn handle_tcp_xdp(
         src_port: port,
         dst_port: port_to,
         protocal: protocal as u8,
+        _padding: [0u8; 2],
     };
     let session = &connection.ingress_session();
     if is_requested(&session.to_u64()) {
@@ -219,6 +220,7 @@ fn handle_udp_xdp(
         src_port: port,
         dst_port: port_to,
         protocal: protocal as u8,
+        _padding: [0u8; 2],
     };
     let session = &connection.ingress_session();
     if is_requested(&session.to_u64()) {
@@ -372,6 +374,7 @@ pub fn handle_udp_egress(
         src_port,
         dst_port,
         protocal: protocal as u8,
+        _padding: [0u8; 2],
     };
     // let ses = Session {
     //     src_ip: dst_ip,
@@ -437,6 +440,7 @@ pub fn handle_tcp_egress(
         src_port,
         dst_port,
         protocal: protocal as u8,
+        _padding: [0u8; 2],
     };
     let ses = &connection.egress_session();
     // Maybe here??

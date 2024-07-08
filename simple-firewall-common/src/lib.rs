@@ -9,6 +9,7 @@ pub struct Connection {
     pub src_port: u16,
     pub dst_port: u16,
     pub protocal: u8,
+    pub _padding: [u8; 2],
 }
 
 #[cfg(feature = "user")]
@@ -81,7 +82,7 @@ impl Connection {
             src_ip: self.dst_ip,
             src_port: self.dst_port,
             protocal: self.protocal,
-            _padding: 0,
+            _padding: self._padding[0],
         }
     }
     pub fn ingress_session(self: &Self) -> Session {
@@ -89,7 +90,7 @@ impl Connection {
             src_ip: self.src_ip,
             src_port: self.src_port,
             protocal: self.protocal,
-            _padding: 0,
+            _padding: self._padding[0],
         }
     }
     pub fn into_egress_connection(self: &Self) -> Connection {
@@ -100,6 +101,7 @@ impl Connection {
             src_port: self.dst_port,
             dst_port: self.src_port,
             protocal: self.protocal,
+            _padding: self._padding,
         }
     }
 }
