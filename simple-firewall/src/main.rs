@@ -18,7 +18,7 @@ use figment::{
 use local_ip_address::local_ip;
 use log::{debug, info, warn};
 use serde::Deserialize;
-use simple_firewall_common::{ConnectionState, Session};
+use simple_firewall_common::{Connection, ConnectionState};
 use tokio::signal;
 use tokio::time::{interval, Duration, Instant};
 
@@ -155,6 +155,13 @@ async fn main() -> Result<(), anyhow::Error> {
         info!("XDP SKB_MODE Mode Enabled");
     }
 
+    // DO WE HAVE TO ALLOCATE ARRAY FIRST?
+    // let mut connections: Array<_, ConnectionState> =
+    //     Array::try_from(bpf.map_mut("CONNECTIONS").unwrap())?;
+    // for i in 0..u16::MAX {
+    //     _ = connections.set(u32::from(i), ConnectionState::default(), 0);
+    // }
+
     info!("Attaching sfw_egress in to network traffic control classifier");
     _ = tc::qdisc_add_clsact(&opt.iface);
     let egress_program: &mut SchedClassifier =
@@ -187,7 +194,7 @@ async fn main() -> Result<(), anyhow::Error> {
         let mut perf_buf = perf_array.open(cpu_id, None)?;
         let mut del_buf = del_array.open(cpu_id, None)?;
         tokio::task::spawn(async move {
-            let mut u_connection: std::collections::HashMap<u64, Instant> =
+            let mut u_connection: std::collections::HashMap<u16, Instant> =
                 std::collections::HashMap::new();
             let mut buf = vec![BytesMut::with_capacity(1600); 10];
             let mut buf_del = vec![BytesMut::with_capacity(800); 10];
@@ -197,15 +204,16 @@ async fn main() -> Result<(), anyhow::Error> {
                     .await
                     .expect("new conection event");
                 for event in buf.iter_mut().take(events.read) {
-                    let key = unsafe { &*(event.as_ptr() as *const u64) };
-                    u_connection.insert(*key, Instant::now());
+                    let key =
+                        unsafe { &*(event.as_ptr() as *const Connection) };
+                    u_connection.insert(key.src_port, Instant::now());
                 }
                 let events = del_buf
                     .read_events(&mut buf_del)
                     .await
                     .expect("delete event");
                 for event in buf_del.iter_mut().take(events.read) {
-                    let key = unsafe { &*(event.as_ptr() as *const u64) };
+                    let key = unsafe { &*(event.as_ptr() as *const u16) };
                     u_connection.remove(key);
                 }
                 for k in u_connection.clone().keys() {
@@ -247,30 +255,34 @@ async fn main() -> Result<(), anyhow::Error> {
         // let mut rate_limit: PerCpuArray<_, u32> =
         //     PerCpuArray::try_from(bpf.take_map("RATE").expect("get map RATE"))?;
         let mut heart_reset: bool = false;
-        let mut connections: HashMap<_, u64, ConnectionState> =
-            HashMap::try_from(bpf.take_map("CONNECTIONS").unwrap())?;
+        let mut connections: Array<_, ConnectionState> =
+            Array::try_from(bpf.take_map("CONNECTIONS").unwrap())?;
         loop {
             tokio::select! {
                 _ = interval_1.tick() => {
                     let con = del_rev.try_recv();
                     if con.is_ok() {
                         let data = con.unwrap();
-                        let session: Session = Session::from_u64(data);
-                        // Check if connections still exits
-                        let src_ip = Ipv4Addr::from(session.src_ip());
-                        let port = session.src_port();
-                        let protocal = if session.protocal() == 6 {"TCP"} else {"UDP"};
-                        if connections.remove(&data).is_ok() {
-                            info!("Closing {} on {}:{}", protocal, src_ip.to_string(), &port);
-                        } else {
-                        // The connections maybe removed by `rst` signal
-                            info!(
-                                "Closed {}:{} on {}",
-                                src_ip.to_string(),
-                                port,
-                                protocal
-                            );
+                        let cons_ = connections.get(&u32::from(data), 0);
+                        if cons_.is_ok(){
+                            let cons_ = cons_.unwrap();
+                            // Check if connections still exits
+                            let src_ip = Ipv4Addr::from(cons_.remote_ip);
+                            let port = cons_.remote_port;
+                            let protocal = if cons_.protocal == 6 {"TCP"} else {"UDP"};
+                            if connections.set(data as u32, ConnectionState::default(), 0).is_ok() {
+                                info!("Closing {} on {}:{}", protocal, src_ip.to_string(), &port);
+                            } else {
+                            // The connections maybe removed by `rst` signal
+                                info!(
+                                    "Closed {}:{} on {}",
+                                    src_ip.to_string(),
+                                    port,
+                                    protocal
+                                );
+                            }
                         }
+
                     }
                 }
                 _ = interval_2.tick() => {
@@ -314,80 +326,80 @@ fn load_config(
             HashMap::try_from(bpf.map_mut("DNS_ADDR").unwrap())?;
         for k in dns {
             let ip_addrs: Ipv4Addr = k.parse().unwrap();
-            let addrs: u32 = ip_addrs.into();
+            let addrs: u32 = ip_addrs.to_bits();
             info!("allowed DNS IP: {:}", ip_addrs.to_string());
-            dns_list.insert(addrs, 0, 0)?;
+            _ = dns_list.insert(addrs, 0x1, 0);
         }
     }
     if let Some(tcp) = &config.tcp_in {
         if let Some(n) = &tcp.sport {
-            let mut tcp_in_port: HashMap<_, u16, u8> =
-                HashMap::try_from(bpf.map_mut("TCP_IN_SPORT").unwrap())?;
+            let mut tcp_in_port: Array<_, u8> =
+                Array::try_from(bpf.map_mut("TCP_IN_SPORT").unwrap())?;
             for port in n {
                 info!("Allow incomming from tcp port: {:?}", port);
-                tcp_in_port.insert(port, 0, 0)?;
+                tcp_in_port.set(u32::from(*port), 1u8, 0)?;
             }
         }
         if let Some(n) = &tcp.dport {
-            let mut tcp_in_port: HashMap<_, u16, u8> =
-                HashMap::try_from(bpf.map_mut("TCP_IN_DPORT").unwrap())?;
+            let mut tcp_in_port: Array<_, u8> =
+                Array::try_from(bpf.map_mut("TCP_IN_DPORT").unwrap())?;
             for port in n {
                 info!("Allow incomming to tcp port: {:?}", port);
-                tcp_in_port.insert(port, 0, 0)?;
+                tcp_in_port.set(u32::from(*port), 1u8, 0)?;
             }
         }
     }
     if let Some(tcp) = &config.tcp_out {
         if let Some(n) = &tcp.sport {
-            let mut tcp_out_port: HashMap<_, u16, u8> =
-                HashMap::try_from(bpf.map_mut("TCP_OUT_SPORT").unwrap())?;
+            let mut tcp_out_port: Array<_, u8> =
+                Array::try_from(bpf.map_mut("TCP_OUT_SPORT").unwrap())?;
             for port in n {
                 info!("Allow outgoing from tcp port: {:?}", port);
-                tcp_out_port.insert(port, 0, 0)?;
+                tcp_out_port.set(u32::from(*port), 1u8, 0)?;
             }
         }
         if let Some(n) = &tcp.dport {
-            let mut tcp_out_port: HashMap<_, u16, u8> =
-                HashMap::try_from(bpf.map_mut("TCP_OUT_DPORT").unwrap())?;
+            let mut tcp_out_port: Array<_, u8> =
+                Array::try_from(bpf.map_mut("TCP_OUT_DPORT").unwrap())?;
             for port in n {
                 info!("Allow outgoing to tcp port: {:?}", port);
-                tcp_out_port.insert(port, 0, 0)?;
+                tcp_out_port.set(u32::from(*port), 1u8, 0)?;
             }
         }
     }
     if let Some(udp) = &config.udp_in {
         if let Some(n) = &udp.sport {
-            let mut udp_in_port: HashMap<_, u16, u8> =
-                HashMap::try_from(bpf.map_mut("UDP_IN_SPORT").unwrap())?;
+            let mut udp_in_port: Array<_, u8> =
+                Array::try_from(bpf.map_mut("UDP_IN_SPORT").unwrap())?;
             for port in n {
                 info!("Allow incomming from udp port {:?}", port);
-                udp_in_port.insert(port, 0, 0)?;
+                udp_in_port.set(u32::from(*port), 1u8, 0)?;
             }
         }
         if let Some(n) = &udp.dport {
-            let mut udp_in_port: HashMap<_, u16, u8> =
-                HashMap::try_from(bpf.map_mut("UDP_IN_DPORT").unwrap())?;
+            let mut udp_in_port: Array<_, u8> =
+                Array::try_from(bpf.map_mut("UDP_IN_DPORT").unwrap())?;
             for port in n {
                 info!("Allow incomming to udp port {:?}", port);
-                udp_in_port.insert(port, 0, 0)?;
+                udp_in_port.set(u32::from(*port), 1u8, 0)?;
             }
         }
     }
     if let Some(udp) = &config.udp_out {
         if let Some(n) = &udp.sport {
-            let mut udp_out_port: HashMap<_, u16, u8> =
-                HashMap::try_from(bpf.map_mut("UDP_OUT_SPORT").unwrap())?;
+            let mut udp_out_port: Array<_, u8> =
+                Array::try_from(bpf.map_mut("UDP_OUT_SPORT").unwrap())?;
             for port in n {
                 info!("Allow outgoing from udp port {:?}", port);
-                udp_out_port.insert(port, 0, 0)?;
+                udp_out_port.set(u32::from(*port), 1u8, 0)?;
             }
         }
         if let Some(n) = &udp.dport {
-            let mut udp_out_port: HashMap<_, u16, u8> =
-                HashMap::try_from(bpf.map_mut("UDP_OUT_DPORT").unwrap())?;
+            let mut udp_out_port: Array<_, u8> =
+                Array::try_from(bpf.map_mut("UDP_OUT_DPORT").unwrap())?;
             for port in n {
                 info!("Allow outgoing to udp port {:?}", port);
-                udp_out_port.insert(port, 0, 0)?;
+                udp_out_port.set(u32::from(*port), 1u8, 0)?;
             }
         }
     }
