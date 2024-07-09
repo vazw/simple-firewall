@@ -1,9 +1,0 @@
-{
-  # "123": "i,udp", # sync time
-  # "5353": "o,udp", # dns multi-cast
-  "22000": "io,tcp,udp", #syncthing
-  "21027": "io,udp", #// syncthing
-  "4869": "io,tcp", #// nostr relay
-  "208.67.222.222": "dns", #// DNS
-  "9.9.9.9": "dns", #// DNS
-}
