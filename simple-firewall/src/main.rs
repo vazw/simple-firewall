@@ -2,30 +2,105 @@
 use std::net::Ipv4Addr;
 use std::str::FromStr;
 
-use aya::util::{nr_cpus, online_cpus};
+use aya::util::online_cpus;
 
 use anyhow::{Context, Ok};
-use aya::maps::{Array, AsyncPerfEventArray, HashMap, PerCpuArray, PerCpuValues};
-use aya::programs::{SchedClassifier, TcAttachType, Xdp, XdpFlags};
+use aya::maps::{Array, AsyncPerfEventArray, HashMap};
+use aya::programs::{tc, SchedClassifier, TcAttachType, Xdp, XdpFlags};
 use aya::{include_bytes_aligned, Bpf};
 use aya_log::BpfLogger;
 use bytes::BytesMut;
 use clap::Parser;
 use figment::{
-    providers::{Format, Yaml},
+    providers::{Format, Toml},
     Figment,
 };
 use local_ip_address::local_ip;
 use log::{debug, info, warn};
-use simple_firewall_common::{Connection, IcmpPacket, Session};
+use serde::Deserialize;
+use simple_firewall_common::{Connection, ConnectionState};
 use tokio::signal;
 use tokio::time::{interval, Duration, Instant};
+
+#[derive(Debug, Clone, Deserialize)]
+struct TcpIn {
+    pub sport: Option<Vec<u16>>,
+    pub dport: Option<Vec<u16>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct TcpOut {
+    pub sport: Option<Vec<u16>>,
+    pub dport: Option<Vec<u16>>,
+}
+#[derive(Debug, Clone, Deserialize)]
+struct UdpIn {
+    pub sport: Option<Vec<u16>>,
+    pub dport: Option<Vec<u16>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct UdpOut {
+    pub sport: Option<Vec<u16>>,
+    pub dport: Option<Vec<u16>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct Config {
+    pub dns: Option<Vec<String>>,
+    pub tcp_in: Option<TcpIn>,
+    pub tcp_out: Option<TcpOut>,
+    pub udp_in: Option<UdpIn>,
+    pub udp_out: Option<UdpOut>,
+}
+
+impl Config {
+    pub fn len(&self) -> u16 {
+        let mut len: u16 = 0;
+        if let Some(dns) = &self.dns {
+            len += dns.len() as u16;
+        }
+        if let Some(tcp) = &self.tcp_in {
+            if let Some(n) = &tcp.sport {
+                len += n.len() as u16;
+            }
+            if let Some(n) = &tcp.dport {
+                len += n.len() as u16;
+            }
+        }
+        if let Some(tcp) = &self.tcp_out {
+            if let Some(n) = &tcp.sport {
+                len += n.len() as u16;
+            }
+            if let Some(n) = &tcp.dport {
+                len += n.len() as u16;
+            }
+        }
+        if let Some(udp) = &self.udp_in {
+            if let Some(n) = &udp.sport {
+                len += n.len() as u16;
+            }
+            if let Some(n) = &udp.dport {
+                len += n.len() as u16;
+            }
+        }
+        if let Some(udp) = &self.udp_out {
+            if let Some(n) = &udp.sport {
+                len += n.len() as u16;
+            }
+            if let Some(n) = &udp.dport {
+                len += n.len() as u16;
+            }
+        }
+        len
+    }
+}
 
 #[derive(Debug, Parser)]
 struct Opt {
     #[clap(short, long, default_value = "wlp1s0")]
     iface: String,
-    #[clap(short, long, default_value = "./fwcfg.yaml")]
+    #[clap(short, long, default_value = "./sfw.toml")]
     config: String,
 }
 
@@ -61,54 +136,91 @@ async fn main() -> Result<(), anyhow::Error> {
         // This can happen if you remove all log statements from your eBPF program.
         warn!("failed to initialize eBPF logger: {}", e);
     }
-    let egress_program: &mut SchedClassifier = bpf.program_mut("sfw_egress").unwrap().try_into()?;
-    egress_program.load()?;
-    egress_program
-        .attach(&opt.iface, TcAttachType::Egress)
-        .with_context(|| "failed to attach the egress TC program")?;
 
-    let mut config_len: usize;
-    let config = Figment::new().merge(Yaml::file(&opt.config));
-    let config_: std::collections::HashMap<String, String> = config.extract()?;
+    info!("Attaching sfw into XDP map");
+    let program: &mut Xdp = bpf.program_mut("sfw").unwrap().try_into()?;
+    program.unload().unwrap_or(());
+    program.load()?;
+    if program.attach(&opt.iface, XdpFlags::HW_MODE).is_ok() {
+        info!("XDP Hardware Mode Enabled");
+    } else if program.attach(&opt.iface, XdpFlags::DRV_MODE).is_ok() {
+        info!("XDP DRV_MODE Mode Enabled");
+    } else if program.attach(&opt.iface, XdpFlags::default()).is_ok() {
+        info!("XDP Default Mode Enabled");
+    } else {
+        program.attach(&opt.iface, XdpFlags::SKB_MODE).context(
+            r"failed to attach the XDP program with default flags
+- try changing XdpFlags::default() to XdpFlags::SKB_MODE",
+        )?;
+        info!("XDP SKB_MODE Mode Enabled");
+    }
+
+    // DO WE HAVE TO ALLOCATE ARRAY FIRST?
+    // let mut connections: Array<_, ConnectionState> =
+    //     Array::try_from(bpf.map_mut("CONNECTIONS").unwrap())?;
+    // for i in 0..u16::MAX {
+    //     _ = connections.set(u32::from(i), ConnectionState::default(), 0);
+    // }
+
+    info!("Attaching sfw_egress in to network traffic control classifier");
+    _ = tc::qdisc_add_clsact(&opt.iface);
+    let egress_program: &mut SchedClassifier =
+        bpf.program_mut("sfw_egress").unwrap().try_into()?;
+    egress_program.load()?;
+    if egress_program
+        .attach(&opt.iface, TcAttachType::Egress)
+        .is_err()
+    {
+        warn!("failed to initialize sfw_egress");
+        warn!("FALLBACK TO SIMEPLE MODE");
+    }
+
+    let mut config_len: u16;
+    let config = Figment::new().merge(Toml::file(&opt.config));
+    let config_: Config = config.extract()?;
     let host_ip = local_ip().expect("attach to network?");
     let host_addr = Ipv4Addr::from_str(&host_ip.to_string()).expect("ip addrs");
 
     config_len = config_.len();
     _ = load_config(&mut bpf, &opt, &config_, &host_addr);
-    let mut perf_array = AsyncPerfEventArray::try_from(bpf.take_map("NEW").unwrap())?;
-    let (add_send, mut add_rev) = tokio::sync::mpsc::channel(1024);
-    let (del_send, mut del_rev) = tokio::sync::mpsc::channel(1024);
+    let mut perf_array =
+        AsyncPerfEventArray::try_from(bpf.take_map("NEW").unwrap())?;
+    let mut del_array =
+        AsyncPerfEventArray::try_from(bpf.take_map("DEL").unwrap())?;
+    let (del_send, mut del_rev) = tokio::sync::mpsc::channel(256);
 
     for cpu_id in online_cpus()? {
         let del_send = del_send.clone();
-        let add_send = add_send.clone();
         let mut perf_buf = perf_array.open(cpu_id, None)?;
+        let mut del_buf = del_array.open(cpu_id, None)?;
         tokio::task::spawn(async move {
-            let mut u_connection: std::collections::HashMap<Connection, Instant> =
+            let mut u_connection: std::collections::HashMap<u16, Instant> =
                 std::collections::HashMap::new();
-            let mut buf = vec![BytesMut::with_capacity(1024); 10];
+            let mut buf = vec![BytesMut::with_capacity(1600); 10];
+            let mut buf_del = vec![BytesMut::with_capacity(800); 10];
             loop {
-                let events = perf_buf.read_events(&mut buf).await?;
+                let events = perf_buf
+                    .read_events(&mut buf)
+                    .await
+                    .expect("new conection event");
                 for event in buf.iter_mut().take(events.read) {
-                    let key = unsafe { &*(event.as_ptr() as *const Connection) };
-                    let sess = Session {
-                        src_ip: key.dst_ip,
-                        src_port: key.dst_port,
-                        protocol: 6,
-                    };
-                    add_send.send((sess, *key)).await?;
-                    u_connection.insert(*key, Instant::now());
+                    let key =
+                        unsafe { &*(event.as_ptr() as *const Connection) };
+                    u_connection.insert(key.src_port, Instant::now());
+                }
+                let events = del_buf
+                    .read_events(&mut buf_del)
+                    .await
+                    .expect("delete event");
+                for event in buf_del.iter_mut().take(events.read) {
+                    let key = unsafe { &*(event.as_ptr() as *const u16) };
+                    u_connection.remove(key);
                 }
                 for k in u_connection.clone().keys() {
                     if let Some(v) = u_connection.get(k) {
-                        if v.elapsed().as_secs() == 60 {
+                        if v.elapsed().as_secs() == 180 {
                             _ = u_connection.remove(k);
-                            let sess = Session {
-                                src_ip: k.dst_ip,
-                                src_port: k.dst_port,
-                                protocol: 6,
-                            };
-                            del_send.send(sess).await?;
+                            del_send.send(*k).await?;
                         }
                     }
                 }
@@ -117,87 +229,72 @@ async fn main() -> Result<(), anyhow::Error> {
             Ok::<_>(())
         });
     }
-    let mut icmp_array = AsyncPerfEventArray::try_from(bpf.take_map("ICMP_EVENTS").unwrap())?;
-    for cpu_id in online_cpus()? {
-        // let del_send = del_send.clone();
-        // let add_send = add_send.clone();
-        let mut perf_buf = icmp_array.open(cpu_id, None)?;
-        tokio::task::spawn(async move {
-            let mut buf = vec![BytesMut::with_capacity(1024); 10];
-            loop {
-                let events = perf_buf.read_events(&mut buf).await?;
-                for event in buf.iter_mut().take(events.read) {
-                    let key = unsafe { &*(event.as_ptr() as *const IcmpPacket) };
-                    let src_ip = Ipv4Addr::from(key.src_ip);
-                    let dst_ip = Ipv4Addr::from(key.dst_ip);
-                    println!("ICMP packet captured: {} -> {}", src_ip, dst_ip);
-                }
-            }
+    // let mut icmp_array = AsyncPerfEventArray::try_from(bpf.take_map("ICMP_EVENTS").unwrap())?;
+    // for cpu_id in online_cpus()? {
+    //     let mut perf_buf = icmp_array.open(cpu_id, None)?;
+    //     tokio::task::spawn(async move {
+    //         let mut buf = vec![BytesMut::with_capacity(1024); 10];
+    //         loop {
+    //             let events = perf_buf.read_events(&mut buf).await?;
+    //             for event in buf.iter_mut().take(events.read) {
+    //                 let key = unsafe { &*(event.as_ptr() as *const IcmpPacket) };
+    //                 let src_ip = Ipv4Addr::from(key.src_ip);
+    //                 let dst_ip = Ipv4Addr::from(key.dst_ip);
+    //                 info!("ICMP packet captured: {} -> {}", src_ip, dst_ip);
+    //             }
+    //         }
+    //
+    //         Ok::<_>(())
+    //     });
+    // }
 
-            Ok::<_>(())
-        });
-    }
     _ = tokio::task::spawn(async move {
-        let mut interval_1 = interval(Duration::from_millis(10));
+        let mut interval_1 = interval(Duration::from_millis(1000));
         let mut interval_2 = interval(Duration::from_millis(10));
         let mut heart_rate = interval(Duration::from_secs(1));
+        // let mut rate_limit: PerCpuArray<_, u32> =
+        //     PerCpuArray::try_from(bpf.take_map("RATE").expect("get map RATE"))?;
         let mut heart_reset: bool = false;
-        let mut connections: HashMap<_, Session, Connection> =
-            HashMap::try_from(bpf.take_map("CONS").unwrap())?;
+        let mut connections: Array<_, ConnectionState> =
+            Array::try_from(bpf.take_map("CONNECTIONS").unwrap())?;
         loop {
             tokio::select! {
                 _ = interval_1.tick() => {
-                    let con = add_rev.try_recv();
-                    if con.is_ok() {
-                        let (sess, con) = con.unwrap();
-                        let src_ip = Ipv4Addr::from(con.src_ip);
-                        let dst_ip = Ipv4Addr::from(sess.src_ip);
-                        let protocal = if con.protocol == 6 {"TCP"} else {"UDP"};
-                        if connections.get(&sess,0).is_err() && connections.insert(sess,con,0).is_ok() {
-                            info!(
-                                "Bind {} {}:{} --> {}:{}",
-                                protocal, src_ip, con.src_port, dst_ip, sess.src_port
-                            );
-                        }
-                            // } else {
-                            //         info!(
-                            //             "Fail Binding {} {}:{} --> {}:{}",
-                            //             protocal, src_ip, con.src_port, dst_ip, sess.src_port
-                            //         );
-                            // };
-                    }
                     let con = del_rev.try_recv();
                     if con.is_ok() {
-                        let con = con.unwrap();
-                        let src_ip = Ipv4Addr::from(con.src_ip);
-                        let protocal = if con.protocol == 6 {"TCP"} else {"UDP"};
-                        if connections.remove(&con).is_ok() {
-                            info!("Removed {}:{} on {}", src_ip, con.src_port, protocal);
+                        let data = con.unwrap();
+                        let cons_ = connections.get(&u32::from(data), 0);
+                        if cons_.is_ok(){
+                            let cons_ = cons_.unwrap();
+                            // Check if connections still exits
+                            let src_ip = Ipv4Addr::from(cons_.remote_ip);
+                            let port = cons_.remote_port;
+                            let protocal = if cons_.protocal == 6 {"TCP"} else {"UDP"};
+                            if connections.set(data as u32, ConnectionState::default(), 0).is_ok() {
+                                info!("Closing {} on {}:{}", protocal, src_ip.to_string(), &port);
+                            } else {
+                            // The connections maybe removed by `rst` signal
+                                info!(
+                                    "Closed {}:{} on {}",
+                                    src_ip.to_string(),
+                                    port,
+                                    protocal
+                                );
+                            }
                         }
+
                     }
-                    // let mut n = 0;
-                    // let cons = connections.keys();
-                    // for con in cons {
-                    //     if con.is_ok() {
-                    //         n +=1
-                    //     };
-                    // }
-                    // println!("Sessions {}", n);
-
-
                 }
                 _ = interval_2.tick() => {
-                    let new_config: std::collections::HashMap<String, String> = Figment::new().merge(Yaml::file(&opt.config)).extract()?;
+                    let new_config: Config
+                        = Figment::new().merge(Toml::file(&opt.config)).extract()?;
                     if new_config.len() != config_len {
                         _ = load_config(&mut bpf, &opt, &new_config, &host_addr);
                         config_len = new_config.len();
                     };
 
                     if heart_reset {
-                        let mut rate_limit: PerCpuArray<_, u32>= PerCpuArray::try_from(bpf.map_mut("RATE").unwrap())?;
-                        // let rate = rate_limit.get(&0u32,0);
-                        // println!("1s {:?}", rate.unwrap().iter().sum::<u32>());
-                        rate_limit.set(0,PerCpuValues::try_from(vec![0u32;nr_cpus()?])?,0)?;
+                        // rate_limit.set(0,PerCpuValues::try_from(vec![0u32;nr_cpus()?])?,0)?;
                         heart_reset = false;
                     }
 
@@ -209,14 +306,6 @@ async fn main() -> Result<(), anyhow::Error> {
         }
         Ok(())
     });
-    // loop {
-    //     tokio::select! {
-    //         _ = signal::ctrl_c() => {
-    //             info!("Exiting...");
-    //             break;
-    //         }
-    //     }
-    // }
     signal::ctrl_c().await?;
     info!("Exiting...");
     Ok(())
@@ -225,65 +314,95 @@ async fn main() -> Result<(), anyhow::Error> {
 fn load_config(
     bpf: &mut Bpf,
     opt: &Opt,
-    config: &std::collections::HashMap<String, String>,
+    config: &Config,
     host_addr: &Ipv4Addr,
 ) -> Result<(), anyhow::Error> {
-    println!("Listening on {} IP: {}", &opt.iface, &host_addr.to_string());
-    // Clear mem first
-    //
-    let program: &mut Xdp = bpf.program_mut("sfw").unwrap().try_into()?;
-    program.unload().unwrap_or(());
-    program.load()?;
-    program.attach(&opt.iface, XdpFlags::default())
-        .context("failed to attach the XDP program with default flags - try changing XdpFlags::default() to XdpFlags::SKB_MODE")?;
-    let mut rate_limit: Array<_, u32> = Array::try_from(bpf.map_mut("RATE_LIMIT").unwrap())?;
-    rate_limit.set(0, 1000, 0)?;
-    // let mut cpus: Array<_, u32> = Array::try_from(bpf.map_mut("CPUS").unwrap())?;
-    // cpus.set(0, nr_cpus()? as u32, 0)?;
-    let mut host: Array<_, u32> = Array::try_from(bpf.map_mut("HOST").unwrap())?;
+    info!("Listening on {} IP: {}", &opt.iface, &host_addr.to_string());
+    let mut host: Array<_, u32> =
+        Array::try_from(bpf.map_mut("HOST").unwrap())?;
     host.set(0, u32::from(*host_addr), 0)?;
-    for (k, v) in config.iter() {
-        if v.contains("tcp") {
-            if v.contains('i') {
-                let mut tcp_in_port: HashMap<_, u16, u16> =
-                    HashMap::try_from(bpf.map_mut("IAP").unwrap())?;
-                let port: u16 = k.parse().unwrap();
-                info!("incomming tcp port: {:?}", port);
-                tcp_in_port.insert(port, port, 0)?;
-            }
-            if v.contains('o') {
-                let mut tcp_out_port: HashMap<_, u16, u16> =
-                    HashMap::try_from(bpf.map_mut("OAP").unwrap())?;
-                let port: u16 = k.parse().unwrap();
-                info!("outgoing tcp port: {:?}", port);
-                tcp_out_port.insert(port, port, 0)?;
-            }
-        }
-        if v.contains("udp") {
-            if v.contains('i') {
-                let mut udp_in_port: HashMap<_, u16, u16> =
-                    HashMap::try_from(bpf.map_mut("UDPIAP").unwrap())?;
-                let port: u16 = k.parse().unwrap();
-                info!("incomming udp port {:?}", port);
-                udp_in_port.insert(port, port, 0)?;
-            }
-            if v.contains('o') {
-                let mut udp_out_port: HashMap<_, u16, u16> =
-                    HashMap::try_from(bpf.map_mut("UDPOAP").unwrap())?;
-                let port: u16 = k.parse().unwrap();
-                info!("outgoing udp port {:?}", port);
-                udp_out_port.insert(port, port, 0)?;
-            }
-        }
-        if v.contains("dns") {
-            let mut dns_list: HashMap<_, u32, u32> =
-                HashMap::try_from(bpf.map_mut("ALLST").unwrap())?;
+    if let Some(dns) = &config.dns {
+        let mut dns_list: HashMap<_, u32, u8> =
+            HashMap::try_from(bpf.map_mut("DNS_ADDR").unwrap())?;
+        for k in dns {
             let ip_addrs: Ipv4Addr = k.parse().unwrap();
-            let addrs: u32 = ip_addrs.into();
+            let addrs: u32 = ip_addrs.to_bits();
             info!("allowed DNS IP: {:}", ip_addrs.to_string());
-            dns_list.insert(addrs, addrs, 0)?;
+            _ = dns_list.insert(addrs, 0x1, 0);
         }
     }
-    println!("Done!");
+    if let Some(tcp) = &config.tcp_in {
+        if let Some(n) = &tcp.sport {
+            let mut tcp_in_port: Array<_, u8> =
+                Array::try_from(bpf.map_mut("TCP_IN_SPORT").unwrap())?;
+            for port in n {
+                info!("Allow incomming from tcp port: {:?}", port);
+                tcp_in_port.set(u32::from(*port), 1u8, 0)?;
+            }
+        }
+        if let Some(n) = &tcp.dport {
+            let mut tcp_in_port: Array<_, u8> =
+                Array::try_from(bpf.map_mut("TCP_IN_DPORT").unwrap())?;
+            for port in n {
+                info!("Allow incomming to tcp port: {:?}", port);
+                tcp_in_port.set(u32::from(*port), 1u8, 0)?;
+            }
+        }
+    }
+    if let Some(tcp) = &config.tcp_out {
+        if let Some(n) = &tcp.sport {
+            let mut tcp_out_port: Array<_, u8> =
+                Array::try_from(bpf.map_mut("TCP_OUT_SPORT").unwrap())?;
+            for port in n {
+                info!("Allow outgoing from tcp port: {:?}", port);
+                tcp_out_port.set(u32::from(*port), 1u8, 0)?;
+            }
+        }
+        if let Some(n) = &tcp.dport {
+            let mut tcp_out_port: Array<_, u8> =
+                Array::try_from(bpf.map_mut("TCP_OUT_DPORT").unwrap())?;
+            for port in n {
+                info!("Allow outgoing to tcp port: {:?}", port);
+                tcp_out_port.set(u32::from(*port), 1u8, 0)?;
+            }
+        }
+    }
+    if let Some(udp) = &config.udp_in {
+        if let Some(n) = &udp.sport {
+            let mut udp_in_port: Array<_, u8> =
+                Array::try_from(bpf.map_mut("UDP_IN_SPORT").unwrap())?;
+            for port in n {
+                info!("Allow incomming from udp port {:?}", port);
+                udp_in_port.set(u32::from(*port), 1u8, 0)?;
+            }
+        }
+        if let Some(n) = &udp.dport {
+            let mut udp_in_port: Array<_, u8> =
+                Array::try_from(bpf.map_mut("UDP_IN_DPORT").unwrap())?;
+            for port in n {
+                info!("Allow incomming to udp port {:?}", port);
+                udp_in_port.set(u32::from(*port), 1u8, 0)?;
+            }
+        }
+    }
+    if let Some(udp) = &config.udp_out {
+        if let Some(n) = &udp.sport {
+            let mut udp_out_port: Array<_, u8> =
+                Array::try_from(bpf.map_mut("UDP_OUT_SPORT").unwrap())?;
+            for port in n {
+                info!("Allow outgoing from udp port {:?}", port);
+                udp_out_port.set(u32::from(*port), 1u8, 0)?;
+            }
+        }
+        if let Some(n) = &udp.dport {
+            let mut udp_out_port: Array<_, u8> =
+                Array::try_from(bpf.map_mut("UDP_OUT_DPORT").unwrap())?;
+            for port in n {
+                info!("Allow outgoing to udp port {:?}", port);
+                udp_out_port.set(u32::from(*port), 1u8, 0)?;
+            }
+        }
+    }
+    info!("Done parsing config!");
     Ok(())
 }
