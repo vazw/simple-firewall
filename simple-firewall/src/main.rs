@@ -100,7 +100,7 @@ impl Config {
 struct Opt {
     #[clap(short, long, default_value = "wlp1s0")]
     iface: String,
-    #[clap(short, long, default_value = "./sfw.toml")]
+    #[clap(short, long, default_value = "/etc/sfw/sfwconfig.toml")]
     config: String,
 }
 
@@ -177,7 +177,12 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let mut config_len: u16;
     let config = Figment::new().merge(Toml::file(&opt.config));
-    let config_: Config = config.extract()?;
+    // Parse dev env config here too
+    let config_: Config = config.extract().unwrap_or(
+        Figment::new()
+            .merge(Toml::file("./sfwconfig.toml"))
+            .extract()?,
+    );
     let host_ip = local_ip().expect("attach to network?");
     let host_addr = Ipv4Addr::from_str(&host_ip.to_string()).expect("ip addrs");
 
@@ -335,6 +340,10 @@ fn load_config(
         if let Some(n) = &tcp.sport {
             let mut tcp_in_port: Array<_, u8> =
                 Array::try_from(bpf.map_mut("TCP_IN_SPORT").unwrap())?;
+            for port in 0..u16::MAX as u32 {
+                info!("Allow incomming from tcp port: {:?}", port);
+                tcp_in_port.set(port, 0x0, 0)?;
+            }
             for port in n {
                 info!("Allow incomming from tcp port: {:?}", port);
                 tcp_in_port.set(u32::from(*port), 1u8, 0)?;
@@ -343,6 +352,9 @@ fn load_config(
         if let Some(n) = &tcp.dport {
             let mut tcp_in_port: Array<_, u8> =
                 Array::try_from(bpf.map_mut("TCP_IN_DPORT").unwrap())?;
+            for port in 0..u16::MAX as u32 {
+                tcp_in_port.set(port, 0x0, 0)?;
+            }
             for port in n {
                 info!("Allow incomming to tcp port: {:?}", port);
                 tcp_in_port.set(u32::from(*port), 1u8, 0)?;
@@ -353,6 +365,9 @@ fn load_config(
         if let Some(n) = &tcp.sport {
             let mut tcp_out_port: Array<_, u8> =
                 Array::try_from(bpf.map_mut("TCP_OUT_SPORT").unwrap())?;
+            for port in 0..u16::MAX as u32 {
+                tcp_out_port.set(port, 0x0, 0)?;
+            }
             for port in n {
                 info!("Allow outgoing from tcp port: {:?}", port);
                 tcp_out_port.set(u32::from(*port), 1u8, 0)?;
@@ -361,6 +376,9 @@ fn load_config(
         if let Some(n) = &tcp.dport {
             let mut tcp_out_port: Array<_, u8> =
                 Array::try_from(bpf.map_mut("TCP_OUT_DPORT").unwrap())?;
+            for port in 0..u16::MAX as u32 {
+                tcp_out_port.set(port, 0x0, 0)?;
+            }
             for port in n {
                 info!("Allow outgoing to tcp port: {:?}", port);
                 tcp_out_port.set(u32::from(*port), 1u8, 0)?;
@@ -371,6 +389,9 @@ fn load_config(
         if let Some(n) = &udp.sport {
             let mut udp_in_port: Array<_, u8> =
                 Array::try_from(bpf.map_mut("UDP_IN_SPORT").unwrap())?;
+            for port in 0..u16::MAX as u32 {
+                udp_in_port.set(port, 0x0, 0)?;
+            }
             for port in n {
                 info!("Allow incomming from udp port {:?}", port);
                 udp_in_port.set(u32::from(*port), 1u8, 0)?;
@@ -379,6 +400,9 @@ fn load_config(
         if let Some(n) = &udp.dport {
             let mut udp_in_port: Array<_, u8> =
                 Array::try_from(bpf.map_mut("UDP_IN_DPORT").unwrap())?;
+            for port in 0..u16::MAX as u32 {
+                udp_in_port.set(port, 0x0, 0)?;
+            }
             for port in n {
                 info!("Allow incomming to udp port {:?}", port);
                 udp_in_port.set(u32::from(*port), 1u8, 0)?;
@@ -389,6 +413,9 @@ fn load_config(
         if let Some(n) = &udp.sport {
             let mut udp_out_port: Array<_, u8> =
                 Array::try_from(bpf.map_mut("UDP_OUT_SPORT").unwrap())?;
+            for port in 0..u16::MAX as u32 {
+                udp_out_port.set(port, 0x0, 0)?;
+            }
             for port in n {
                 info!("Allow outgoing from udp port {:?}", port);
                 udp_out_port.set(u32::from(*port), 1u8, 0)?;
@@ -397,6 +424,9 @@ fn load_config(
         if let Some(n) = &udp.dport {
             let mut udp_out_port: Array<_, u8> =
                 Array::try_from(bpf.map_mut("UDP_OUT_DPORT").unwrap())?;
+            for port in 0..u16::MAX as u32 {
+                udp_out_port.set(port, 0x0, 0)?;
+            }
             for port in n {
                 info!("Allow outgoing to udp port {:?}", port);
                 udp_out_port.set(u32::from(*port), 1u8, 0)?;
