@@ -3,13 +3,13 @@
 
 use aya_ebpf::{
     bindings::{xdp_action, TC_ACT_SHOT},
-    helpers::bpf_ktime_get_ns,
+    helpers::{bpf_csum_diff, bpf_ktime_get_ns},
     macros::{map, xdp},
     maps::{Array, HashMap, PerfEventArray},
     programs::XdpContext,
 };
 
-use core::{mem, net::Ipv4Addr};
+use core::{borrow::BorrowMut, mem, net::Ipv4Addr};
 use network_types::{
     eth::{EthHdr, EtherType},
     icmp::IcmpHdr,
@@ -26,6 +26,12 @@ const LOCAL_BROADCAST: u32 = 3232236031;
 #[map(name = "CONNECTIONS")]
 static mut CONNECTIONS: Array<ConnectionState> =
     Array::with_max_entries(u16::MAX as u32, 0);
+#[map(name = "UNKNOWN")]
+static mut UNKNOWN: HashMap<u32, ConnectionState> =
+    HashMap::with_max_entries(256, 0);
+#[map(name = "KNOWN")]
+static mut KNOWN: HashMap<u32, ConnectionState> =
+    HashMap::with_max_entries(256, 0);
 
 #[map(name = "TCP_IN_SPORT")]
 static mut TCP_IN_SPORT: Array<u8> =
@@ -81,21 +87,54 @@ unsafe fn ptr_at<T>(ctx: &XdpContext, offset: usize) -> Result<&T, u32> {
     let data_ = unsafe { data.as_ref().ok_or(xdp_action::XDP_PASS)? };
     Ok(data_)
 }
+#[inline(always)]
+unsafe fn ptr_at_mut<T>(
+    ctx: &XdpContext,
+    offset: usize,
+) -> Result<*mut T, u32> {
+    let start = ctx.data();
+    let end = ctx.data_end();
+    let len = mem::size_of::<T>();
+    if start + offset + len > end {
+        return Err(xdp_action::XDP_PASS);
+    }
+    Ok((start + offset) as *mut T)
+}
 
 #[inline(always)]
-fn is_requested(session: u16, remote_addr: u32) -> bool {
+pub fn csum_fold_helper(mut csum: u64) -> u16 {
+    for _i in 0..4 {
+        if (csum >> 16) > 0 {
+            csum = (csum & 0xffff) + (csum >> 16);
+        }
+    }
+    !(csum as u16)
+}
+
+#[inline(always)]
+fn is_requested(
+    session: u16,
+    remote_addr: u32,
+) -> Result<*mut ConnectionState, ()> {
     unsafe {
-        CONNECTIONS
-            .get(session as u32)
-            .is_some_and(|x| x.remote_ip == remote_addr)
+        if let Some(cons) = CONNECTIONS.get_ptr_mut(session as u32) {
+            if (*cons).remote_ip == remote_addr
+                && !(*cons).tcp_state.eq(&TCPState::Closed)
+            {
+                return Ok(cons);
+            } else {
+                return Err(());
+            }
+        }
+        Err(())
     }
 }
 
 #[inline(always)]
-fn add_request(session: u16, connection_state: &ConnectionState) -> bool {
+fn add_request(session: u16, connection_state: ConnectionState) -> bool {
     unsafe {
         if let Some(cons) = CONNECTIONS.get_ptr_mut(session as u32) {
-            *cons = *connection_state;
+            *cons = connection_state;
             return true;
         }
         false
@@ -197,59 +236,180 @@ fn handle_tcp_xdp(
     dst_ip: Ipv4Addr,
     protocal: IpProto,
 ) -> Result<u32, u32> {
-    let header: &TcpHdr = unsafe { ptr_at(&ctx, PROTOCAL_OFFSET)? };
-    // external port comming from outside
-    let port = u16::from_be(header.source);
-    // someone reaching to internal port
-    let port_to = u16::from_be(header.dest);
-    let connection = Connection::ingress(
-        src_ip.to_bits(),
-        port,
-        dst_ip.to_bits(),
-        port_to,
-        protocal as u8,
-    );
-    let session = connection.into_session();
-    if is_requested(connection.src_port, connection.dst_ip) {
-        aya_log_ebpf::debug!(
-            &ctx,
-            "ESTABLISHED on TCP with {:i}:{}",
-            src_ip.to_bits(),
-            port,
-        );
-        if update_tcp_conns_xdp(&ctx, header, session.src_port) {
-            Ok(xdp_action::XDP_PASS)
-        } else {
-            aya_log_ebpf::debug!(
-                &ctx,
-                "Closing {:i}:{} on TCP",
-                connection.src_ip,
-                connection.src_port
-            );
-            Ok(xdp_action::XDP_DROP)
-        }
-    } else if tcp_dport_in(port_to) || tcp_sport_in(port) {
-        aya_log_ebpf::debug!(
-            &ctx,
-            "TCP {:i}:{} ===> {:i}:{}",
-            src_ip.to_bits(),
-            port,
-            dst_ip.to_bits(),
-            port_to
-        );
-        add_request(session.src_port, &connection.into_state_listen());
-        unsafe { NEW.output(&ctx, &connection, 0) };
-        Ok(xdp_action::XDP_PASS)
-    } else {
-        aya_log_ebpf::debug!(
-            &ctx,
-            "TCP_DROP! {:i}:{} -x-> {:i}:{}",
+    let header_mut: *mut TcpHdr = unsafe { ptr_at_mut(&ctx, PROTOCAL_OFFSET)? };
+    if let Some(header) = unsafe { header_mut.as_ref() } {
+        // external port comming from outside
+        let port = u16::from_be(header.source);
+        // someone reaching to internal port
+        let port_to = u16::from_be(header.dest);
+        let connection = Connection::ingress(
             src_ip.to_bits(),
             port,
             dst_ip.to_bits(),
             port_to,
+            protocal as u8,
         );
-        Ok(xdp_action::XDP_DROP)
+        if let Some(connection_state) =
+            unsafe { CONNECTIONS.get_ptr_mut(port_to as u32) }
+        {
+            if unsafe {
+                (*connection_state).remote_ip == connection.dst_ip
+                    && !(*connection_state).tcp_state.eq(&TCPState::Closed)
+            } {
+                let transitioned = unsafe {
+                    process_tcp_state_transition(
+                        header,
+                        &mut (*connection_state),
+                    )
+                };
+                if transitioned
+                    && unsafe {
+                        (*connection_state).tcp_state.eq(&TCPState::Closed)
+                    }
+                {
+                    unsafe { DEL.output(&ctx, &port_to, 0) };
+                }
+                aya_log_ebpf::debug!(
+                    &ctx,
+                    "ESTABLISHED on TCP with {:i}:{}",
+                    src_ip.to_bits(),
+                    port,
+                );
+                Ok(xdp_action::XDP_PASS)
+            } else {
+                aya_log_ebpf::debug!(
+                    &ctx,
+                    "DROP on TCP with {:i}:{}",
+                    src_ip.to_bits(),
+                    port,
+                );
+                Ok(xdp_action::XDP_DROP)
+            }
+        } else if let Some(connection_state) =
+            // Known and unkown connections
+            // will be handle here with agressive tcp rst on first try
+            unsafe { KNOWN.get_ptr_mut(&connection.dst_ip) }
+        {
+            if unsafe {
+                (*connection_state).remote_ip == connection.dst_ip
+                    && !(*connection_state).tcp_state.eq(&TCPState::Closed)
+            } {
+                let transitioned = unsafe {
+                    process_tcp_state_transition(
+                        header,
+                        &mut (*connection_state),
+                    )
+                };
+                if transitioned
+                    && unsafe {
+                        (*connection_state).tcp_state.eq(&TCPState::Closed)
+                    }
+                {
+                    unsafe { DEL.output(&ctx, &port_to, 0) };
+                }
+                aya_log_ebpf::debug!(
+                    &ctx,
+                    "ESTABLISHED on TCP with {:i}:{}",
+                    src_ip.to_bits(),
+                    port,
+                );
+                Ok(xdp_action::XDP_PASS)
+            } else {
+                Ok(xdp_action::XDP_DROP)
+            }
+        } else if let Some(connection_state) =
+            // Known and unkown connections
+            // will be handle here with agressive tcp rst on first try
+            unsafe { UNKNOWN.get_ptr_mut(&connection.dst_ip) }
+        {
+            let ipv: *mut Ipv4Hdr = unsafe { ptr_at_mut(&ctx, EthHdr::LEN)? };
+            let transitioned =
+                unsafe { agressive_tcp_rst(header, &mut (*connection_state)) };
+            if transitioned.eq(&TCPState::Established) {
+                unsafe { (*header_mut).set_rst(0x1) };
+                _ = unsafe {
+                    KNOWN.insert(
+                        &connection.dst_ip,
+                        &connection.into_state_listen(),
+                        0,
+                    )
+                };
+                unsafe { NEW.output(&ctx, &connection, 0) };
+            } else {
+                unsafe { (*header_mut).set_ack(0x1) };
+            }
+            unsafe {
+                (*ipv).set_dst_addr(Ipv4Addr::from(connection.dst_ip));
+                (*header_mut).dest = connection.dst_port.to_be();
+                (*ipv).set_src_addr(Ipv4Addr::from(connection.src_ip));
+                (*header_mut).source = connection.src_port.to_be();
+                (*ipv).check = 0;
+                let full_sum = bpf_csum_diff(
+                    mem::MaybeUninit::zeroed().assume_init(),
+                    0,
+                    ipv as *mut u32,
+                    Ipv4Hdr::LEN as u32,
+                    0,
+                ) as u64;
+                (*ipv).check = csum_fold_helper(full_sum);
+            }
+            Ok(xdp_action::XDP_TX)
+        } else if tcp_dport_in(port_to) || tcp_sport_in(port) {
+            aya_log_ebpf::debug!(
+                &ctx,
+                "TCP {:i}:{} <== {:i}:{}",
+                src_ip.to_bits(),
+                port,
+                dst_ip.to_bits(),
+                port_to
+            );
+            let transitioned = unsafe {
+                agressive_tcp_rst(
+                    header,
+                    connection.into_state_listen().borrow_mut(),
+                )
+            };
+            if transitioned.eq(&TCPState::SynReceived) {
+                unsafe {
+                    _ = UNKNOWN.insert(
+                        &connection.dst_ip,
+                        &connection.into_state_listen(),
+                        0,
+                    )
+                };
+            }
+
+            let ipv: *mut Ipv4Hdr = unsafe { ptr_at_mut(&ctx, EthHdr::LEN)? };
+            unsafe { (*header_mut).set_ack(0x1) };
+            unsafe {
+                (*ipv).set_dst_addr(Ipv4Addr::from(connection.dst_ip));
+                (*header_mut).dest = connection.dst_port.to_be();
+                (*ipv).set_src_addr(Ipv4Addr::from(connection.src_ip));
+                (*header_mut).source = connection.src_port.to_be();
+                (*ipv).check = 0;
+                let full_sum = bpf_csum_diff(
+                    mem::MaybeUninit::zeroed().assume_init(),
+                    0,
+                    ipv as *mut u32,
+                    Ipv4Hdr::LEN as u32,
+                    0,
+                ) as u64;
+                (*ipv).check = csum_fold_helper(full_sum);
+            }
+            Ok(xdp_action::XDP_TX)
+        } else {
+            aya_log_ebpf::debug!(
+                &ctx,
+                "TCP_DROP! {:i}:{} -x-> {:i}:{}",
+                src_ip.to_bits(),
+                port,
+                dst_ip.to_bits(),
+                port_to,
+            );
+            Ok(xdp_action::XDP_DROP)
+        }
+    } else {
+        Err(xdp_action::XDP_PASS)
     }
 }
 
@@ -264,8 +424,10 @@ fn handle_udp_xdp(
     let port = u16::from_be(header.source);
     // Allow to acsess is_broadcast request
     if let Some(port_) = unsafe { TEMPORT.get_ptr_mut(port as u32) } {
-        unsafe { *port_ = 0xff };
-        return Ok(xdp_action::XDP_PASS);
+        if unsafe { (*port_).eq(&0x1) } {
+            unsafe { *port_ = 0xff };
+            return Ok(xdp_action::XDP_PASS);
+        }
     }
     // someone reaching to internal port
     let port_to = u16::from_be(header.dest);
@@ -277,25 +439,12 @@ fn handle_udp_xdp(
         protocal as u8,
     );
     let session = &connection.into_session();
-    if is_requested(connection.src_port, connection.dst_ip) {
+    if is_requested(connection.src_port, connection.dst_ip).is_ok() {
         aya_log_ebpf::debug!(
             &ctx,
             "UDP ESTABLISHED on {:i}:{}",
             session.src_ip,
             session.src_port
-        );
-        Ok(xdp_action::XDP_PASS)
-    } else if port == 53 && ip_addr_allowed(&src_ip.to_bits()) {
-        // DNS Reslover let her in
-        // add_request(&connection.ingress_session(), &connection);
-
-        aya_log_ebpf::debug!(
-            &ctx,
-            "DNS! {:i}:{} <== {:i}:{}",
-            dst_ip.to_bits(),
-            port_to,
-            src_ip.to_bits(),
-            port
         );
         Ok(xdp_action::XDP_PASS)
     } else if udp_dport_in(port_to) || udp_sport_in(port) {
@@ -425,7 +574,7 @@ pub fn handle_udp_egress(
     let dst_port = u16::from_be(udp_hdr.dest);
     if dst_ip.is_broadcast() {
         if let Some(port_) = unsafe { TEMPORT.get_ptr_mut(dst_port as u32) } {
-            unsafe { *port_ = 0xff };
+            unsafe { *port_ = 0x1 };
         }
         return Ok(TC_ACT_PIPE);
     }
@@ -436,13 +585,7 @@ pub fn handle_udp_egress(
         dst_port,
         protocal as u8,
     );
-    // let ses = Session {
-    //     src_ip: dst_ip,
-    //     src_port: dst_port,
-    //     protocol: protocal as u8,
-    // };
-    // let session = &connection.into_session();
-    if is_requested(connection.src_port, connection.dst_ip) {
+    if is_requested(connection.src_port, connection.dst_ip).is_ok() {
         aya_log_ebpf::debug!(
             &ctx,
             "UDP ESTABLISHED! {:i}:{} ==> {:i}:{}",
@@ -453,9 +596,7 @@ pub fn handle_udp_egress(
         );
         Ok(TC_ACT_PIPE)
     } else if dst_port == 53 && ip_addr_allowed(&dst_ip.to_bits()) {
-        // DNS Reslover let her in
-        // add_request(&connection.ingress_session(), &connection);
-
+        add_request(connection.src_port, connection.into_state_sent());
         aya_log_ebpf::debug!(
             &ctx,
             "DNS! {:i}:{} ==> {:i}:{}",
@@ -484,7 +625,7 @@ pub fn handle_udp_egress(
             dst_port,
         );
         unsafe { NEW.output(&ctx, &connection, 0) };
-        add_request(connection.src_port, &connection.into_state());
+        add_request(connection.src_port, connection.into_state_sent());
         Ok(TC_ACT_PIPE)
         // } else {
         //     Ok(TC_ACT_SHOT)
@@ -521,40 +662,45 @@ pub fn handle_tcp_egress(
         dst_port,
         protocal as u8,
     );
-    let ses = &connection.into_session();
-    // Maybe here??
-    if is_requested(connection.src_port, connection.dst_ip) {
-        if !update_tcp_conns(&ctx, tcp_hdr, ses.src_port) {
-            aya_log_ebpf::debug!(
-                &ctx,
-                "Closing {:i}:{} on TCP",
-                ses.src_ip,
-                ses.src_port
-            );
+    if let Ok(connection_state) =
+        is_requested(connection.src_port, connection.dst_ip)
+    {
+        let transitioned = unsafe {
+            process_tcp_state_transition(tcp_hdr, &mut (*connection_state))
+        };
+        if transitioned
+            && unsafe { (*connection_state).tcp_state.eq(&TCPState::Closed) }
+        {
+            unsafe { DEL.output(&ctx, &src_port, 0) };
         }
+        aya_log_ebpf::debug!(
+            &ctx,
+            "ESTABLISHED on TCP with {:i}:{}",
+            src_ip.to_bits(),
+            src_port,
+        );
         Ok(TC_ACT_PIPE)
     } else if tcp_dport_out(dst_port) || tcp_sport_out(src_port) {
-        if add_request(ses.src_port, &connection.into_state()) {
-            unsafe { NEW.output(&ctx, &connection, 0) };
-            update_tcp_conns(&ctx, tcp_hdr, ses.src_port);
-            aya_log_ebpf::debug!(
-                &ctx,
-                "TCP Bind {:i}:{} -> {:i}:{}",
-                src_ip.to_bits(),
-                src_port,
-                dst_ip.to_bits(),
-                dst_port,
-            );
-        } else {
-            aya_log_ebpf::debug!(
-                &ctx,
-                "TCP Bind {:i}:{} -> {:i}:{} Failed",
-                src_ip.to_bits(),
-                src_port,
-                dst_ip.to_bits(),
-                dst_port,
-            );
-        }
+        add_request(connection.src_port, connection.into_state_sent());
+        unsafe { NEW.output(&ctx, &connection, 0) };
+        aya_log_ebpf::debug!(
+            &ctx,
+            "TCP Bind {:i}:{} -> {:i}:{}",
+            src_ip.to_bits(),
+            src_port,
+            dst_ip.to_bits(),
+            dst_port,
+        );
+        // } else {
+        //     aya_log_ebpf::debug!(
+        //         &ctx,
+        //         "TCP Bind {:i}:{} -> {:i}:{} Failed",
+        //         src_ip.to_bits(),
+        //         src_port,
+        //         dst_ip.to_bits(),
+        //         dst_port,
+        //     );
+        // }
         Ok(TC_ACT_PIPE)
     } else {
         aya_log_ebpf::debug!(
@@ -592,19 +738,18 @@ pub fn handle_icmp_egress(
 }
 
 #[inline(always)]
-pub fn process_tcp_state_transition(
+unsafe fn process_tcp_state_transition(
     hdr: &TcpHdr,
     connection_state: &mut ConnectionState,
-) -> (bool, bool) {
+) -> bool {
     let syn = hdr.syn() != 0;
     let ack = hdr.ack() != 0;
     let fin = hdr.fin() != 0;
     let rst = hdr.rst() != 0;
-    let mut action = true;
 
     if rst {
         connection_state.tcp_state = TCPState::Closed;
-        return (true, action);
+        return true;
     }
     // Check for SYN-ACK flood
     if syn && ack {
@@ -617,7 +762,8 @@ pub fn process_tcp_state_transition(
             connection_state.syn_ack_count += 1;
             // Threshold
             if connection_state.syn_ack_count > 100 {
-                action = false; // Drop the packet
+                connection_state.tcp_state = TCPState::Closed;
+                return true;
             }
         }
     };
@@ -626,135 +772,127 @@ pub fn process_tcp_state_transition(
         TCPState::Closed => {
             if syn && !ack {
                 connection_state.tcp_state = TCPState::SynSent;
-                return (true, action);
+                return true;
             }
         }
         TCPState::Listen => {
             if syn && !ack {
                 connection_state.tcp_state = TCPState::SynReceived;
-                return (true, action);
+                return true;
             }
         }
         TCPState::SynReceived => {
             if ack && !syn {
                 connection_state.tcp_state = TCPState::Established;
-                return (true, action);
+                return true;
             }
         }
         TCPState::SynSent => {
             if syn && ack {
                 connection_state.tcp_state = TCPState::Established;
-                return (true, action);
+                return true;
             }
         }
         TCPState::Established => {
             if fin {
                 connection_state.tcp_state = TCPState::FinWait1;
-                return (true, action);
+                return true;
             }
         }
         TCPState::FinWait1 => {
             if fin && ack {
                 connection_state.tcp_state = TCPState::TimeWait;
-                return (true, action);
+                return true;
             }
             if fin {
                 connection_state.tcp_state = TCPState::Closing;
-                return (true, action);
+                return true;
             }
             if ack {
                 connection_state.tcp_state = TCPState::FinWait2;
-                return (true, action);
+                return true;
             }
         }
         TCPState::FinWait2 => {
             if ack {
                 connection_state.tcp_state = TCPState::TimeWait;
-                return (true, action);
+                return true;
             }
         }
         TCPState::Closing => {
             if ack {
                 connection_state.tcp_state = TCPState::TimeWait;
-                return (true, action);
+                return true;
             }
         }
         TCPState::TimeWait => {
             if ack {
                 connection_state.tcp_state = TCPState::Closed;
-                return (true, action);
+                return true;
             }
         }
         _ => {}
     }
-    (false, action)
-}
-
-// Modifies the map tracking TCP connections based on the current state
-// of the TCP connection and the incoming TCP packet's header.
-#[inline(always)]
-pub fn update_tcp_conns(
-    ctx: &TcContext,
-    hdr: &TcpHdr,
-    session_key: u16,
-) -> bool {
-    if let Some(connection_state) =
-        unsafe { CONNECTIONS.get(session_key as u32) }
-    {
-        let mut connection_state = *connection_state;
-        let (transitioned, action) =
-            process_tcp_state_transition(hdr, &mut connection_state);
-        if transitioned && connection_state.tcp_state == TCPState::Closed {
-            unsafe { DEL.output(ctx, &session_key, 0) };
-            if let Some(cons) =
-                unsafe { CONNECTIONS.get_ptr_mut(session_key as u32) }
-            {
-                unsafe { *cons = connection_state };
-            };
-            return action;
-        };
-        // If the connection has not reached the Closed state yet, but it did transition to a new state,
-        // then record the new state using flag 2
-        // /* File: include/uapi/linux/bpf.h */
-        // /* flags for BPF_MAP_UPDATE_ELEM command */
-        // #define BPF_ANY       0 /* create new element or update existing */
-        // #define BPF_NOEXIST   1 /* create new element only if it didn't exist */
-        // #define BPF_EXIST     2 /* only update existing element */
-        // if transitioned {
-        //     _ = unsafe {
-        //         CONNECTIONS.insert(session_key, &connection_state, 2)
-        //     };
-        //     return action;
-        // }
-    }
-    true
+    false
 }
 
 #[inline(always)]
-pub fn update_tcp_conns_xdp(
-    ctx: &XdpContext,
+unsafe fn agressive_tcp_rst(
     hdr: &TcpHdr,
-    session_key: u16,
-) -> bool {
-    if let Some(connection_state) =
-        unsafe { CONNECTIONS.get(session_key as u32) }
-    {
-        let mut connection_state = *connection_state;
-        let (transitioned, action) =
-            process_tcp_state_transition(hdr, &mut connection_state);
-        if transitioned && connection_state.tcp_state == TCPState::Closed {
-            unsafe { DEL.output(ctx, &session_key, 0) };
-            if let Some(cons) =
-                unsafe { CONNECTIONS.get_ptr_mut(session_key as u32) }
-            {
-                unsafe { *cons = connection_state };
-            };
-            return action;
-        };
-    }
-    true
-}
+    connection_state: &mut ConnectionState,
+) -> TCPState {
+    let syn = hdr.syn() != 0;
+    let ack = hdr.ack() != 0;
 
+    if syn && ack {
+        return TCPState::Closed;
+    };
+
+    match connection_state.tcp_state {
+        TCPState::Listen => {
+            if syn && !ack {
+                connection_state.tcp_state = TCPState::SynReceived;
+                TCPState::SynReceived
+            } else {
+                TCPState::Closed
+            }
+        }
+        TCPState::SynReceived => {
+            if ack && !syn {
+                connection_state.tcp_state = TCPState::Established;
+                TCPState::Established
+            } else {
+                TCPState::Closed
+            }
+        }
+        _ => TCPState::Closed,
+    }
+}
+// #[inline(always)]
+// pub fn update_tcp_conns_xdp(
+//     ctx: &XdpContext,
+//     hdr: &TcpHdr,
+//     session_key: u16,
+// ) -> bool {
+//     if let Some(connection_state) =
+//         unsafe { CONNECTIONS.get(session_key as u32) }
+//     {
+//         let mut connection_state = *connection_state;
+//         let (transitioned, action) =
+//             process_tcp_state_transition(hdr, &mut connection_state);
+//         if transitioned && connection_state.tcp_state == TCPState::Closed {
+//             unsafe { DEL.output(ctx, &session_key, 0) };
+//             if let Some(cons) =
+//                 unsafe { CONNECTIONS.get_ptr_mut(session_key as u32) }
+//             {
+//                 unsafe { *cons = connection_state };
+//             };
+//             return action;
+//         };
+//     }
+//     true
+// }
+//
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
     unsafe { core::hint::unreachable_unchecked() }
