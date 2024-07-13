@@ -341,7 +341,6 @@ fn load_config(
             let mut tcp_in_port: Array<_, u8> =
                 Array::try_from(bpf.map_mut("TCP_IN_SPORT").unwrap())?;
             for port in 0..u16::MAX as u32 {
-                info!("Allow incomming from tcp port: {:?}", port);
                 tcp_in_port.set(port, 0x0, 0)?;
             }
             for port in n {
