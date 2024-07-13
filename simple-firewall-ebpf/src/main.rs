@@ -250,48 +250,12 @@ fn handle_tcp_xdp(
             protocal as u8,
         );
         if let Some(connection_state) =
-            unsafe { CONNECTIONS.get_ptr_mut(port_to as u32) }
-        {
-            if unsafe {
-                (*connection_state).remote_ip == connection.dst_ip
-                    && !(*connection_state).tcp_state.eq(&TCPState::Closed)
-            } {
-                let transitioned = unsafe {
-                    process_tcp_state_transition(
-                        header,
-                        &mut (*connection_state),
-                    )
-                };
-                if transitioned
-                    && unsafe {
-                        (*connection_state).tcp_state.eq(&TCPState::Closed)
-                    }
-                {
-                    unsafe { DEL.output(&ctx, &port_to, 0) };
-                }
-                aya_log_ebpf::debug!(
-                    &ctx,
-                    "ESTABLISHED on TCP with {:i}:{}",
-                    src_ip.to_bits(),
-                    port,
-                );
-                Ok(xdp_action::XDP_PASS)
-            } else {
-                aya_log_ebpf::debug!(
-                    &ctx,
-                    "DROP on TCP with {:i}:{}",
-                    src_ip.to_bits(),
-                    port,
-                );
-                Ok(xdp_action::XDP_DROP)
-            }
-        } else if let Some(connection_state) =
             // Known and unkown connections
             // will be handle here with agressive tcp rst on first try
             unsafe { KNOWN.get_ptr_mut(&connection.dst_ip) }
         {
             if unsafe {
-                (*connection_state).remote_ip == connection.dst_ip
+                (*connection_state).remote_ip.eq(&connection.dst_ip)
                     && !(*connection_state).tcp_state.eq(&TCPState::Closed)
             } {
                 let transitioned = unsafe {
@@ -397,6 +361,42 @@ fn handle_tcp_xdp(
                 (*ipv).check = csum_fold_helper(full_sum);
             }
             Ok(xdp_action::XDP_TX)
+        } else if let Some(connection_state) =
+            unsafe { CONNECTIONS.get_ptr_mut(port_to as u32) }
+        {
+            if unsafe {
+                (*connection_state).remote_ip.eq(&connection.dst_ip)
+                    && !(*connection_state).tcp_state.eq(&TCPState::Closed)
+            } {
+                let transitioned = unsafe {
+                    process_tcp_state_transition(
+                        header,
+                        &mut (*connection_state),
+                    )
+                };
+                if transitioned
+                    && unsafe {
+                        (*connection_state).tcp_state.eq(&TCPState::Closed)
+                    }
+                {
+                    unsafe { DEL.output(&ctx, &port_to, 0) };
+                }
+                aya_log_ebpf::debug!(
+                    &ctx,
+                    "ESTABLISHED on TCP with {:i}:{}",
+                    src_ip.to_bits(),
+                    port,
+                );
+                Ok(xdp_action::XDP_PASS)
+            } else {
+                aya_log_ebpf::debug!(
+                    &ctx,
+                    "DROP on TCP with {:i}:{}",
+                    src_ip.to_bits(),
+                    port,
+                );
+                Ok(xdp_action::XDP_DROP)
+            }
         } else {
             aya_log_ebpf::debug!(
                 &ctx,
