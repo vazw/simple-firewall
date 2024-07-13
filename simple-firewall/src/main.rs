@@ -201,8 +201,8 @@ async fn main() -> Result<(), anyhow::Error> {
         tokio::task::spawn(async move {
             let mut u_connection: std::collections::HashMap<u16, Instant> =
                 std::collections::HashMap::new();
-            let mut buf = vec![BytesMut::with_capacity(1600); 10];
-            let mut buf_del = vec![BytesMut::with_capacity(800); 10];
+            let mut buf = vec![BytesMut::with_capacity(16); 1536];
+            let mut buf_del = vec![BytesMut::with_capacity(2); 512];
             loop {
                 let events = perf_buf
                     .read_events(&mut buf)
