@@ -20,8 +20,8 @@ pub struct ConnectionState {
     pub last_syn_ack_time: u64,
     pub syn_ack_count: u32,
     pub remote_ip: u32,
-    pub protocal: u8,
     pub remote_port: u16,
+    pub protocal: u8,
     pub tcp_state: TCPState,
     _padding_: u8,
 }
@@ -180,13 +180,25 @@ impl Connection {
         }
     }
     #[inline(always)]
+    pub fn into_state_sent(&self) -> ConnectionState {
+        ConnectionState {
+            last_syn_ack_time: 0,
+            syn_ack_count: 0,
+            remote_ip: self.dst_ip,
+            remote_port: self.dst_port,
+            protocal: self.protocal,
+            tcp_state: TCPState::SynSent,
+            _padding_: 0xff,
+        }
+    }
+    #[inline(always)]
     pub fn into_state_listen(&self) -> ConnectionState {
         ConnectionState {
             last_syn_ack_time: 0,
             syn_ack_count: 0,
             remote_ip: self.dst_ip,
-            protocal: self.protocal,
             remote_port: self.dst_port,
+            protocal: self.protocal,
             tcp_state: TCPState::Listen,
             _padding_: 0xff,
         }
