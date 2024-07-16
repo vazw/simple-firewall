@@ -203,6 +203,18 @@ impl Connection {
             _padding_: 0xff,
         }
     }
+    #[inline(always)]
+    pub fn into_state_synreceived(&self) -> ConnectionState {
+        ConnectionState {
+            last_syn_ack_time: 0,
+            syn_ack_count: 0,
+            remote_ip: self.dst_ip,
+            remote_port: self.dst_port,
+            protocal: self.protocal,
+            tcp_state: TCPState::SynReceived,
+            _padding_: 0xff,
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
