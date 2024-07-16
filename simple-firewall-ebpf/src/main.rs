@@ -9,7 +9,7 @@ use aya_ebpf::{
     programs::XdpContext,
 };
 
-use core::{borrow::BorrowMut, mem, net::Ipv4Addr};
+use core::{mem, net::Ipv4Addr};
 use network_types::{
     eth::{EthHdr, EtherType},
     icmp::IcmpHdr,
@@ -222,6 +222,11 @@ fn try_simple_firewall(ctx: XdpContext) -> Result<u32, u32> {
                     Ok(xdp_action::XDP_PASS)
                 }
                 IpProto::Icmp => handle_icmp_xdp(ctx, src_ip, dst_ip),
+                IpProto::Sctp => {
+                    // let header = Sctp
+                    aya_log_ebpf::debug!(&ctx, "Sctp ?");
+                    Ok(xdp_action::XDP_PASS)
+                }
                 _ => Ok(xdp_action::XDP_PASS),
             }
         }
@@ -236,8 +241,19 @@ fn handle_tcp_xdp(
     dst_ip: Ipv4Addr,
     protocal: IpProto,
 ) -> Result<u32, u32> {
+    let ipv: *mut Ipv4Hdr = unsafe { ptr_at_mut(&ctx, EthHdr::LEN)? };
     let header_mut: *mut TcpHdr = unsafe { ptr_at_mut(&ctx, PROTOCAL_OFFSET)? };
+    // let total_len = unsafe { (*ipv).tot_len };
+    // let ip_len = unsafe { (*ipv).ihl() * 4 };
+    // let header_len = unsafe { (*header_mut).doff() * 4 };
+    // aya_log_ebpf::info!(
+    //     &ctx,
+    //     "from {:i} header len:{} bits",
+    //     src_ip.to_bits(),
+    //     header_len
+    // );
     if let Some(header) = unsafe { header_mut.as_ref() } {
+        // let data_off = header.doff();
         // external port comming from outside
         let port = u16::from_be(header.source);
         // someone reaching to internal port
@@ -271,6 +287,7 @@ fn handle_tcp_xdp(
                     port,
                     "in KNOWN"
                 );
+
                 if transitioned
                     && unsafe {
                         (*connection_state).tcp_state.eq(&TCPState::Closed)
@@ -292,6 +309,40 @@ fn handle_tcp_xdp(
                     }
                 {
                     Ok(xdp_action::XDP_PASS)
+                } else if transitioned
+                    && unsafe {
+                        (*connection_state).tcp_state.eq(&TCPState::Listen)
+                    }
+                {
+                    let ethdr: *mut EthHdr = unsafe { ptr_at_mut(&ctx, 0)? };
+                    let src_mac = unsafe { (*ethdr).src_addr };
+                    let dst_mac = unsafe { (*ethdr).dst_addr };
+                    unsafe {
+                        (*header_mut).set_ack(0);
+                        (*header_mut).set_syn(0);
+                        (*header_mut).set_rst(1);
+                        (*header_mut).dest = connection.dst_port.to_be();
+                        (*header_mut).source = connection.src_port.to_be();
+                        (*header_mut).ack_seq = 0;
+                        (*header_mut).seq = 0;
+                        (*ethdr).src_addr = dst_mac;
+                        (*ethdr).dst_addr = src_mac;
+                        (*ipv).dst_addr = connection.dst_ip.to_be();
+                        (*ipv).src_addr = connection.src_ip.to_be();
+                        (*ipv).check = 0;
+                        let full_sum = bpf_csum_diff(
+                            mem::MaybeUninit::zeroed().assume_init(),
+                            0,
+                            ipv as *mut u32,
+                            Ipv4Hdr::LEN as u32,
+                            0,
+                        ) as u64;
+                        (*ipv).check = csum_fold_helper(full_sum);
+                        // (*header_mut).check -= 17u16.to_be();
+                        // Manual padding checksum :D
+                        (*header_mut).check += 12u16.to_be();
+                    };
+                    Ok(xdp_action::XDP_TX)
                 } else {
                     Ok(xdp_action::XDP_DROP)
                 }
@@ -307,42 +358,42 @@ fn handle_tcp_xdp(
                 src_ip.to_bits(),
                 port,
             );
-            let ipv: *mut Ipv4Hdr = unsafe { ptr_at_mut(&ctx, EthHdr::LEN)? };
             let transitioned =
                 unsafe { agressive_tcp_rst(header, &mut (*connection_state)) };
             if transitioned.eq(&TCPState::Established) {
                 aya_log_ebpf::info!(&ctx, "Established",);
-            //     unsafe {
-            //         (*header_mut).set_syn(0);
-            //         (*header_mut).set_rst(1);
-            //         (*header_mut).ack_seq = (*header_mut).seq + 1;
-            //         _ = KNOWN.insert(
-            //             &connection.dst_ip,
-            //             &connection.into_state_listen(),
-            //             0,
-            //         );
-            //         _ = UNKNOWN.remove(&connection.dst_ip);
-            //         NEW.output(&ctx, &connection, 0);
-            //     };
+                unsafe {
+                    (*header_mut).set_ack(0);
+                    (*header_mut).set_syn(0);
+                    (*header_mut).set_rst(1);
+                    // Manual padding checksum :D
+                    (*header_mut).check += 12u16.to_be();
+                    (*header_mut).ack_seq =
+                        (u32::from_be((*header_mut).seq) + 1).to_be();
+                    _ = KNOWN.insert(&connection.dst_ip, &*connection_state, 0);
+                    _ = UNKNOWN.remove(&connection.dst_ip);
+                    NEW.output(&ctx, &connection, 0);
+                };
             } else if transitioned.eq(&TCPState::SynReceived) {
                 aya_log_ebpf::info!(&ctx, "SynReceived",);
-                // unsafe {
-                //     (*header_mut).set_syn(1);
-                //     (*header_mut).set_ack(1);
-                // };
+                unsafe {
+                    (*header_mut).set_syn(1);
+                    (*header_mut).check -= 17u16.to_be();
+                    (*header_mut).set_ack(1);
+                };
             }
-            unsafe {
-                (*header_mut).set_syn(0);
-                (*header_mut).set_rst(1);
-                (*header_mut).ack_seq = (*header_mut).seq + 1;
-                _ = KNOWN.insert(
-                    &connection.dst_ip,
-                    &connection.into_state_listen(),
-                    0,
-                );
-                _ = UNKNOWN.remove(&connection.dst_ip);
-                NEW.output(&ctx, &connection, 0);
-            };
+            // } else {
+            //     unsafe {
+            //         (*header_mut).set_syn(0);
+            //         (*header_mut).set_syn(0);
+            //         (*header_mut).set_ack(0);
+            //         (*header_mut).set_rst(1);
+            //         (*header_mut).set_psh(0);
+            //         (*header_mut).check += 12u16.to_be();
+            //     }
+            //     aya_log_ebpf::info!(&ctx, "unknown state",);
+            //     return Ok(xdp_action::XDP_TX);
+            // }
             let ethdr: *mut EthHdr = unsafe { ptr_at_mut(&ctx, 0)? };
             let src_mac = unsafe { (*ethdr).src_addr };
             let dst_mac = unsafe { (*ethdr).dst_addr };
@@ -353,7 +404,8 @@ fn handle_tcp_xdp(
                 (*header_mut).dest = connection.dst_port.to_be();
                 (*ipv).src_addr = connection.src_ip.to_be();
                 (*header_mut).source = connection.src_port.to_be();
-                (*header_mut).ack_seq = (*header_mut).seq + 1;
+                (*header_mut).ack_seq =
+                    (u32::from_be((*header_mut).seq) + 1).to_be();
                 (*header_mut).seq = 0;
                 (*ipv).check = 0;
                 let full_sum = bpf_csum_diff(
@@ -364,7 +416,7 @@ fn handle_tcp_xdp(
                     0,
                 ) as u64;
                 (*ipv).check = csum_fold_helper(full_sum);
-                (*header_mut).check = 0;
+                // (*header_mut).check -= 17u16.to_be();
             }
             Ok(xdp_action::XDP_TX)
         } else if tcp_dport_in(port_to) || tcp_sport_in(port) {
@@ -377,16 +429,13 @@ fn handle_tcp_xdp(
                 port,
             );
             let transitioned = unsafe {
-                agressive_tcp_rst(
-                    header,
-                    connection.into_state_listen().borrow_mut(),
-                )
+                agressive_tcp_rst(header, &mut connection.into_state_listen())
             };
             if transitioned.eq(&TCPState::SynReceived) {
                 unsafe {
                     _ = UNKNOWN.insert(
                         &connection.dst_ip,
-                        &connection.into_state_listen(),
+                        &connection.into_state_synreceived(),
                         0,
                     )
                 };
@@ -406,7 +455,8 @@ fn handle_tcp_xdp(
                 (*header_mut).dest = connection.dst_port.to_be();
                 (*ipv).src_addr = connection.src_ip.to_be();
                 (*header_mut).source = connection.src_port.to_be();
-                (*header_mut).ack_seq = (*header_mut).seq + 1;
+                (*header_mut).ack_seq =
+                    (u32::from_be((*header_mut).seq) + 1).to_be();
                 (*header_mut).seq = 0;
                 (*ipv).check = 0;
                 let full_sum = bpf_csum_diff(
@@ -417,7 +467,7 @@ fn handle_tcp_xdp(
                     0,
                 ) as u64;
                 (*ipv).check = csum_fold_helper(full_sum);
-                (*header_mut).check = 0;
+                (*header_mut).check -= 17u16.to_be();
             }
             Ok(xdp_action::XDP_TX)
         } else if let Some(connection_state) =
@@ -578,17 +628,6 @@ unsafe fn tc_ptr_at<T>(ctx: &TcContext, offset: usize) -> Result<&T, i32> {
     Ok(data_)
 }
 
-// #[inline(always)]
-// unsafe fn ptr_mut<T>(ctx: &TcContext, offset: usize) -> Result<*mut T, i32> {
-//     let start = ctx.data();
-//     let end = ctx.data_end();
-//     let len = mem::size_of::<T>();
-//     if start + offset + len > end {
-//         return Err(TC_ACT_PIPE);
-//     }
-//     Ok((start + offset) as *mut T)
-// }
-
 #[classifier]
 pub fn sfw_egress(ctx: TcContext) -> i32 {
     match try_tc_egress(ctx) {
@@ -666,6 +705,7 @@ pub fn handle_udp_egress(
         );
         Ok(TC_ACT_PIPE)
     } else if udp_dport_out(dst_port) || udp_sport_out(src_port) {
+        add_request(connection.src_port, connection.into_state_sent());
         aya_log_ebpf::debug!(
             &ctx,
             "UDP OUT! {:i}:{} ==> {:i}:{}",
@@ -684,10 +724,7 @@ pub fn handle_udp_egress(
             dst_port,
         );
         unsafe { NEW.output(&ctx, &connection, 0) };
-        add_request(connection.src_port, connection.into_state_sent());
         Ok(TC_ACT_PIPE)
-        // } else {
-        //     Ok(TC_ACT_SHOT)
     } else {
         aya_log_ebpf::debug!(
             &ctx,
@@ -805,6 +842,7 @@ unsafe fn process_tcp_state_transition(
     let ack = hdr.ack() != 0;
     let fin = hdr.fin() != 0;
     let rst = hdr.rst() != 0;
+    let psh = hdr.psh() != 0;
 
     if rst {
         connection_state.tcp_state = TCPState::Closed;
@@ -855,6 +893,9 @@ unsafe fn process_tcp_state_transition(
         TCPState::Established => {
             if fin {
                 connection_state.tcp_state = TCPState::FinWait1;
+                return true;
+            } else if psh && ack {
+                connection_state.tcp_state = TCPState::Listen;
                 return true;
             }
         }
@@ -924,30 +965,6 @@ unsafe fn agressive_tcp_rst(
         _ => TCPState::Closed,
     }
 }
-// #[inline(always)]
-// pub fn update_tcp_conns_xdp(
-//     ctx: &XdpContext,
-//     hdr: &TcpHdr,
-//     session_key: u16,
-// ) -> bool {
-//     if let Some(connection_state) =
-//         unsafe { CONNECTIONS.get(session_key as u32) }
-//     {
-//         let mut connection_state = *connection_state;
-//         let (transitioned, action) =
-//             process_tcp_state_transition(hdr, &mut connection_state);
-//         if transitioned && connection_state.tcp_state == TCPState::Closed {
-//             unsafe { DEL.output(ctx, &session_key, 0) };
-//             if let Some(cons) =
-//                 unsafe { CONNECTIONS.get_ptr_mut(session_key as u32) }
-//             {
-//                 unsafe { *cons = connection_state };
-//             };
-//             return action;
-//         };
-//     }
-//     true
-// }
 
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
