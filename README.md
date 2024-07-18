@@ -1,6 +1,6 @@
 # simple-firewall a simple kernel level firewall
 
-## Simeple - Low Memory-Footprint and Reliable.
+## Simeple - Low Memory-Footprint and Reliable using XDP
 
 ![ScreenShot](https://github.com/vazw/simple-firewall/blob/main/screenshot/screenshot.png)
 
@@ -13,9 +13,31 @@
 1. Blazingly fast
 2. Filter TCP and UDP with specified PORT
 3. Specified DNS reslover
-4. Rate limit 1,000 request per seconds
+4. TCP state recognizer
+5. Aggressive TCP reset on first syn
 
-## Build eBPF
+#### HOW Aggressive TCP reset work?
+
+```
+[Client]            [Firewall]          [Server]
+    |                   |                   |
+    | -----> syn -----> | if NEW connection |
+    |                   | Firewall will act |
+    | <--- syn ack ---- | like it's serving |
+    |                   | our service       |
+    | ------- ack ----> |                   |
+    |                   |it's actually dummy|
+    | <----- rst <----- | respone by XDP_TX |
+    |                   |                   |
+    | ------ syn -------------------------> |
+    |                   |                   |
+    | <--- syn ack ------------------------ |
+    |                   |                   |
+    | ------- ack ------------------------> |
+    |                   |                   |
+    | <-------- ESTABLISHED --------------> |
+
+```
 
 ```bash
 cargo sfw build-ebpf
@@ -36,7 +58,7 @@ cargo sfw build
 ## Run
 
 ```bash
-RUST_LOG=info cargo sfw run -i <NIC> -c <path-to-config.yaml>
+RUST_LOG=info cargo sfw run -i <NIC> -c <path-to-config.toml>
 ```
 
 To perform a release build you can use the `--release` flag.
@@ -44,34 +66,41 @@ You may also change the target architecture with the `--target` flag.
 
 ## Config
 
-simple-firewall use simple yaml config pattern
+simple-firewall use simple toml config pattern
 
 ### config options
 
-- `i` Incomming-Port a port from outside server comming to us.(etc. web-browsing)
-- `o` Outgoing-Port a port from our server to outside.(etc. serving website/service)
-- `tcp` Allowed on TCP protocal
-- `udp` Allowed on UDP protocal
+- `tcp_in` Incomming-Port a port from outside comming to us.(etc. web-browsing)
+- `tcp_out` Outgoing-Port a port from our server to outside.(etc. serving website/service)
+- `udp_in` Incomming-Port a port from outside comming to us.(etc. web-browsing)
+- `udp_out` Outgoing-Port a port from our server to outside.(etc. serving website/service)
 
-these options can be nested likes example below except `dns` which we will provide only allowed DNS reslover IP address.
-
-`fwcfg.yaml`
+`sfwconfig.toml`
 
 ```
-{
-  "80": "i,tcp",
-  "8181": "i,tcp",
-  "443": "i,tcp",
-  "123": "i,udp", # sync time
-  "67": "i,udp", # router
-  # "5353": "o,udp", # dns multi-cast
-  "22000": "i,o,tcp,udp", #syncthing
-  "21027": "i,o,udp", #// syncthing
-  "22022": "i,o,tcp", #// custom ssh
-  "4869": "i,o,tcp", #// nostr relay
-  "208.67.222.222": "dns", #// DNS
-  "9.9.9.9": "dns", #// DNS
-}
+dns = ["208.67.222.222", "9.9.9.9"]
+
+[tcp_in]
+sport = []
+dport = [4869,8000,8008]
+
+[tcp_out]
+sport = [22000,4869,8000, 8008]
+dport = [22,80,443,8181,10022, 20086]
+
+[udp_in]
+sport = [22000,21027]
+dport = [22000,21027]
+
+[udp_out]
+sport = [22000,21027]
+dport = [22000,21027, 123, 67, 8443]
+
+# 123 = NTP network time
+# 67 = router
+# 22 = ssh
+# 80,443 = regular http
+# 22000 and 21027 = syncthing
 ```
 
 ## Installation
@@ -82,12 +111,12 @@ cargo install bpf-linker
 cargo sfw install --path <install-path> # Default is /usr/bin/
 ```
 
-then make a auto-startup script for it with `sfw -i <NIC> -c <path-to-config.yaml>`
+then make a auto-startup script for it with `sfw -i <NIC> -c <path-to-config.toml>`
 
 in my case I was using `pkexec` to auto-startup with my SwayWM started
 
 `.config/sway/config`
 
 ```bash
-exec pkexec sfw -i wlp1s0 -c /etc/fwcfg.yaml &
+exec pkexec sfw -i wlp1s0 -c /etc/sfw/sfwconfig.toml &
 ```
