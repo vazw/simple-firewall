@@ -39,6 +39,8 @@
 
 ```
 
+## Build eBPF
+
 ```bash
 cargo sfw build-ebpf
 ```
