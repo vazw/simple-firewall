@@ -1,13 +1,11 @@
 #![no_std]
-use core::mem;
-use core::ptr;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Connection {
-    pub src_ip: u32,
-    pub dst_ip: u32,
-    pub src_port: u16,
-    pub dst_port: u16,
+    pub host_addr: u32,
+    pub remote_addr: u32,
+    pub host_port: u16,
+    pub remote_port: u16,
     pub protocal: u8,
     _padding: [u8; 3],
 }
@@ -30,20 +28,15 @@ pub struct ConnectionState {
 unsafe impl aya::Pod for ConnectionState {}
 
 impl ConnectionState {
-    pub fn to_backlist_key(&self) -> Session {
-        Session {
-            src_ip: self.remote_ip,
-            src_port: self.remote_port,
-            protocal: self.protocal,
-            _padding: self._padding_,
-        }
+    pub fn to_backlist_key(&self) -> u32 {
+        self.remote_ip
     }
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct IcmpPacket {
-    pub src_ip: u32,
-    pub dst_ip: u32,
+    pub host_addr: u32,
+    pub remote_addr: u32,
     pub icmp_type: u8,
     pub icmp_code: u8,
     pub checksum: u16,
@@ -51,85 +44,23 @@ pub struct IcmpPacket {
 #[cfg(feature = "user")]
 unsafe impl aya::Pod for IcmpPacket {}
 
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-pub struct Session {
-    pub src_ip: u32,
-    pub src_port: u16,
-    pub protocal: u8,
-    _padding: u8,
-}
-
-#[cfg(feature = "user")]
-unsafe impl aya::Pod for Session {}
-
-impl Session {
-    #[inline(always)]
-    pub fn to_u64(&self) -> u64 {
-        unsafe { mem::transmute::<Session, u64>(*self) }
-    }
-    #[inline(always)]
-    pub fn from_u64(data: u64) -> Self {
-        unsafe { mem::transmute::<u64, Session>(data) }
-    }
-    #[inline(always)]
-    pub fn src_ip(&self) -> u32 {
-        unsafe { ptr::read_unaligned(&self.src_ip) }
-    }
-
-    #[inline(always)]
-    pub fn set_src_ip(&mut self, value: u32) {
-        unsafe { ptr::write_unaligned(&mut self.src_ip, value) }
-    }
-
-    #[inline(always)]
-    pub fn src_port(&self) -> u16 {
-        unsafe { ptr::read_unaligned(&self.src_port) }
-    }
-
-    #[inline(always)]
-    pub fn set_src_port(&mut self, value: u16) {
-        unsafe { ptr::write_unaligned(&mut self.src_port, value) }
-    }
-
-    #[inline(always)]
-    pub fn protocal(&self) -> u8 {
-        unsafe { ptr::read_unaligned(&self.protocal) }
-    }
-
-    #[inline(always)]
-    pub fn set_protocal(&mut self, value: u8) {
-        unsafe { ptr::write_unaligned(&mut self.protocal, value) }
-    }
-
-    #[inline(always)]
-    pub fn new(src_ip: u32, src_port: u16, protocal: u8) -> Self {
-        Session {
-            src_ip,
-            src_port,
-            protocal,
-            _padding: 0,
-        }
-    }
-}
-
 impl Connection {
     //
     // dst : REMOTE
     //
     #[inline(always)]
     pub fn egress(
-        src_ip: u32,
-        src_port: u16,
-        dst_ip: u32,
-        dst_port: u16,
+        host_addr: u32,
+        host_port: u16,
+        remote_addr: u32,
+        remote_port: u16,
         protocal: u8,
     ) -> Self {
         Connection {
-            src_ip,
-            dst_ip,
-            src_port,
-            dst_port,
+            host_addr,
+            remote_addr,
+            host_port,
+            remote_port,
             protocal,
             _padding: [0u8; 3],
         }
@@ -140,31 +71,26 @@ impl Connection {
     //
     #[inline(always)]
     pub fn ingress(
-        src_ip: u32,
-        src_port: u16,
-        dst_ip: u32,
-        dst_port: u16,
+        host_addr: u32,
+        host_port: u16,
+        remote_addr: u32,
+        remote_port: u16,
         protocal: u8,
     ) -> Self {
         Connection {
-            src_ip: dst_ip,
-            dst_ip: src_ip,
-            src_port: dst_port,
-            dst_port: src_port,
+            host_addr,
+            remote_addr,
+            host_port,
+            remote_port,
             protocal,
             _padding: [0u8; 3],
         }
     }
 
     #[inline(always)]
-    pub fn into_session(&self) -> Session {
-        // USE OUR HOST AS SessionKey
-        Session {
-            src_ip: self.src_ip,
-            src_port: self.src_port,
-            protocal: self.protocal,
-            _padding: self._padding[0],
-        }
+    pub fn into_session(&self) -> u32 {
+        // USE REMOTE HOST AS SessionKey
+        self.remote_addr
     }
     #[inline(always)]
     pub fn into_state(&self) -> ConnectionState {
@@ -172,9 +98,9 @@ impl Connection {
         ConnectionState {
             last_syn_ack_time: 0,
             syn_ack_count: 0,
-            remote_ip: self.dst_ip,
+            remote_ip: self.remote_addr,
+            remote_port: self.remote_port,
             protocal: self.protocal,
-            remote_port: self.dst_port,
             tcp_state: TCPState::default(),
             _padding_: 0xff,
         }
@@ -184,8 +110,8 @@ impl Connection {
         ConnectionState {
             last_syn_ack_time: 0,
             syn_ack_count: 0,
-            remote_ip: self.dst_ip,
-            remote_port: self.dst_port,
+            remote_ip: self.remote_addr,
+            remote_port: self.remote_port,
             protocal: self.protocal,
             tcp_state: TCPState::SynSent,
             _padding_: 0xff,
@@ -196,8 +122,8 @@ impl Connection {
         ConnectionState {
             last_syn_ack_time: 0,
             syn_ack_count: 0,
-            remote_ip: self.dst_ip,
-            remote_port: self.dst_port,
+            remote_ip: self.remote_addr,
+            remote_port: self.remote_port,
             protocal: self.protocal,
             tcp_state: TCPState::Listen,
             _padding_: 0xff,
@@ -208,8 +134,8 @@ impl Connection {
         ConnectionState {
             last_syn_ack_time: 0,
             syn_ack_count: 0,
-            remote_ip: self.dst_ip,
-            remote_port: self.dst_port,
+            remote_ip: self.remote_addr,
+            remote_port: self.remote_port,
             protocal: self.protocal,
             tcp_state: TCPState::SynReceived,
             _padding_: 0xff,
