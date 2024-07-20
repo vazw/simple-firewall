@@ -199,7 +199,7 @@ async fn main() -> Result<(), anyhow::Error> {
         let mut perf_buf = perf_array.open(cpu_id, None)?;
         let mut del_buf = del_array.open(cpu_id, None)?;
         tokio::task::spawn(async move {
-            let mut u_connection: std::collections::HashMap<u16, Instant> =
+            let mut u_connection: std::collections::HashMap<u32, Instant> =
                 std::collections::HashMap::new();
             let mut buf = vec![BytesMut::with_capacity(16); 1536];
             let mut buf_del = vec![BytesMut::with_capacity(2); 512];
@@ -211,15 +211,16 @@ async fn main() -> Result<(), anyhow::Error> {
                 for event in buf.iter_mut().take(events.read) {
                     let key =
                         unsafe { &*(event.as_ptr() as *const Connection) };
-                    u_connection.insert(key.src_port, Instant::now());
+                    u_connection.insert(key.into_session(), Instant::now());
                 }
                 let events = del_buf
                     .read_events(&mut buf_del)
                     .await
                     .expect("delete event");
                 for event in buf_del.iter_mut().take(events.read) {
-                    let key = unsafe { &*(event.as_ptr() as *const u16) };
-                    u_connection.remove(key);
+                    let key =
+                        unsafe { &*(event.as_ptr() as *const Connection) };
+                    u_connection.remove(&key.into_session());
                 }
                 for k in u_connection.clone().keys() {
                     if let Some(v) = u_connection.get(k) {
@@ -260,22 +261,22 @@ async fn main() -> Result<(), anyhow::Error> {
         // let mut rate_limit: PerCpuArray<_, u32> =
         //     PerCpuArray::try_from(bpf.take_map("RATE").expect("get map RATE"))?;
         let mut heart_reset: bool = false;
-        let mut connections: Array<_, ConnectionState> =
-            Array::try_from(bpf.take_map("CONNECTIONS").unwrap())?;
+        let mut connections: HashMap<_, u32, ConnectionState> =
+            HashMap::try_from(bpf.take_map("CONNECTIONS").unwrap())?;
         loop {
             tokio::select! {
                 _ = interval_1.tick() => {
                     let con = del_rev.try_recv();
                     if con.is_ok() {
                         let data = con.unwrap();
-                        let cons_ = connections.get(&u32::from(data), 0);
+                        let cons_ = connections.get(&data, 0);
                         if cons_.is_ok(){
                             let cons_ = cons_.unwrap();
                             // Check if connections still exits
                             let src_ip = Ipv4Addr::from(cons_.remote_ip);
                             let port = cons_.remote_port;
                             let protocal = if cons_.protocal == 6 {"TCP"} else {"UDP"};
-                            if connections.set(data as u32, ConnectionState::default(), 0).is_ok() {
+                            if connections.insert(data, ConnectionState::default(), 2).is_ok() {
                                 info!("Closing {} on {}:{}", protocal, src_ip.to_string(), &port);
                             } else {
                             // The connections maybe removed by `rst` signal
@@ -323,9 +324,9 @@ fn load_config(
     host_addr: &Ipv4Addr,
 ) -> Result<(), anyhow::Error> {
     info!("Listening on {} IP: {}", &opt.iface, &host_addr.to_string());
-    let mut host: Array<_, u32> =
-        Array::try_from(bpf.map_mut("HOST").unwrap())?;
-    host.set(0, u32::from(*host_addr), 0)?;
+    // let mut host: Array<_, u32> =
+    //     Array::try_from(bpf.map_mut("HOST").unwrap())?;
+    // host.set(0, u32::from(*host_addr), 0)?;
     if let Some(dns) = &config.dns {
         let mut dns_list: HashMap<_, u32, u8> =
             HashMap::try_from(bpf.map_mut("DNS_ADDR").unwrap())?;
