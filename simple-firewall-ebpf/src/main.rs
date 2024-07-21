@@ -20,7 +20,10 @@ use network_types::{
 use simple_firewall_common::{Connection, ConnectionState, TCPState};
 
 const PROTOCAL_OFFSET: usize = EthHdr::LEN + Ipv4Hdr::LEN;
+// 192.168.1.255
 const LOCAL_BROADCAST: u32 = 3232236031;
+// 255.255.255.255
+const BROADCAST: u32 = 4294967295;
 
 // Allocated 20KB for connection
 #[map(name = "CONNECTIONS")]
@@ -197,10 +200,11 @@ fn try_simple_firewall(ctx: XdpContext) -> Result<u32, u32> {
             let remote_addr = ipv.src_addr();
             let host_addr = ipv.dst_addr();
             let protocal = ipv.proto;
-            // Won't mess with DNS and Broadcast
+            // Won't mess with DNS, mulicast and Broadcast
             if (host_addr.is_private()
                 || host_addr.is_unspecified()
-                || host_addr.is_multicast())
+                || host_addr.is_multicast()
+                || host_addr.to_bits() == BROADCAST)
                 && (remote_addr.is_multicast()
                     || remote_addr.to_bits() == LOCAL_BROADCAST
                     || remote_addr.is_private())
@@ -355,8 +359,8 @@ fn handle_tcp_xdp(
             aya_log_ebpf::info!(
                 &ctx,
                 "UNKNOWN on TCP from {:i}:{}",
-                host_addr.to_bits(),
-                host_port,
+                remote_addr.to_bits(),
+                remote_port,
             );
             let transitioned =
                 unsafe { agressive_tcp_rst(header, &mut (*connection_state)) };
