@@ -350,7 +350,7 @@ fn handle_tcp_xdp(
                 }
             }
         } else if let Some(connection_state) =
-            // Known and unkown connections
+            // new connections
             // will be handle here with agressive tcp rst on first try
             unsafe {
                 UNKNOWN.get_ptr_mut(&connection.remote_addr)
@@ -391,18 +391,6 @@ fn handle_tcp_xdp(
                     (*header_mut).set_ack(1);
                 };
             }
-            // } else {
-            //     unsafe {
-            //         (*header_mut).set_syn(0);
-            //         (*header_mut).set_syn(0);
-            //         (*header_mut).set_ack(0);
-            //         (*header_mut).set_rst(1);
-            //         (*header_mut).set_psh(0);
-            //         (*header_mut).check += 12u16.to_be();
-            //     }
-            //     aya_log_ebpf::debug!(&ctx, "unknown state",);
-            //     return Ok(xdp_action::XDP_TX);
-            // }
             let ethdr: *mut EthHdr = unsafe { ptr_at_mut(&ctx, 0)? };
             let src_mac = unsafe { (*ethdr).src_addr };
             let dst_mac = unsafe { (*ethdr).dst_addr };

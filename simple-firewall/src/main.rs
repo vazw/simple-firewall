@@ -1,6 +1,5 @@
 #![allow(unreachable_code)]
 use std::net::Ipv4Addr;
-use std::str::FromStr;
 
 use aya::util::online_cpus;
 
@@ -15,7 +14,6 @@ use figment::{
     providers::{Format, Toml},
     Figment,
 };
-use local_ip_address::local_ip;
 use log::{debug, info, warn};
 use serde::Deserialize;
 use simple_firewall_common::{Connection, ConnectionState};
@@ -183,11 +181,8 @@ async fn main() -> Result<(), anyhow::Error> {
             .merge(Toml::file("./sfwconfig.toml"))
             .extract()?,
     );
-    let host_ip = local_ip().expect("attach to network?");
-    let host_addr = Ipv4Addr::from_str(&host_ip.to_string()).expect("ip addrs");
-
     config_len = config_.len();
-    _ = load_config(&mut bpf, &opt, &config_, &host_addr);
+    _ = load_config(&mut bpf, &config_);
     let mut perf_array =
         AsyncPerfEventArray::try_from(bpf.take_map("NEW").unwrap())?;
     let mut del_array =
@@ -295,7 +290,7 @@ async fn main() -> Result<(), anyhow::Error> {
                     let new_config: Config
                         = Figment::new().merge(Toml::file(&opt.config)).extract()?;
                     if new_config.len() != config_len {
-                        _ = load_config(&mut bpf, &opt, &new_config, &host_addr);
+                        _ = load_config(&mut bpf, &new_config);
                         config_len = new_config.len();
                     };
 
@@ -317,16 +312,7 @@ async fn main() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-fn load_config(
-    bpf: &mut Bpf,
-    opt: &Opt,
-    config: &Config,
-    host_addr: &Ipv4Addr,
-) -> Result<(), anyhow::Error> {
-    info!("Listening on {} IP: {}", &opt.iface, &host_addr.to_string());
-    // let mut host: Array<_, u32> =
-    //     Array::try_from(bpf.map_mut("HOST").unwrap())?;
-    // host.set(0, u32::from(*host_addr), 0)?;
+fn load_config(bpf: &mut Bpf, config: &Config) -> Result<(), anyhow::Error> {
     if let Some(dns) = &config.dns {
         let mut dns_list: HashMap<_, u32, u8> =
             HashMap::try_from(bpf.map_mut("DNS_ADDR").unwrap())?;
