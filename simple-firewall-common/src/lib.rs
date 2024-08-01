@@ -20,8 +20,8 @@ pub struct ConnectionState {
     pub remote_ip: u32,
     pub remote_port: u16,
     pub protocal: u8,
-    pub tcp_state: TCPState,
     _padding_: u8,
+    pub tcp_state: TCPState,
 }
 
 #[cfg(feature = "user")]
