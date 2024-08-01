@@ -96,10 +96,9 @@ fn try_simple_firewall(ctx: XdpContext) -> Result<u32, u32> {
             if (host_addr.is_private()
                 || host_addr.is_unspecified()
                 || host_addr.is_multicast()
-                || host_addr.to_bits() == BROADCAST)
+                || matches!(host_addr.octets(), [.., 255]))
                 && (remote_addr.is_multicast()
-                    || remote_addr.to_bits() == LOCAL_BROADCAST
-                    || remote_addr.to_bits() == BROADCAST)
+                    || matches!(remote_addr.octets(), [.., 255]))
             // || remote_addr.is_private())
             {
                 return Ok(xdp_action::XDP_PASS);
