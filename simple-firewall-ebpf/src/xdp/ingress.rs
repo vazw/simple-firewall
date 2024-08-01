@@ -169,7 +169,7 @@ pub fn handle_tcp_xdp(
                     (*header_mut).set_syn(0);
                     (*header_mut).set_rst(1);
                     // Manual padding checksum :D
-                    // (*header_mut).check += 12u16.to_be();
+                    (*header_mut).check += 12u16.to_be();
                     if CONNECTIONS
                         .insert(&sums_key, &connection.into_state_listen(), 0)
                         .is_ok()
@@ -185,7 +185,7 @@ pub fn handle_tcp_xdp(
                 aya_log_ebpf::info!(&ctx, "SynReceived",);
                 unsafe {
                     (*header_mut).set_syn(1);
-                    // (*header_mut).check -= 17u16.to_be();
+                    (*header_mut).check -= 17u16.to_be();
                     (*header_mut).set_ack(1);
                 };
             }
@@ -228,9 +228,19 @@ pub fn handle_tcp_xdp(
                 (*header_mut).ack_seq =
                     (u32::from_be((*header_mut).seq) + 1).to_be();
                 (*header_mut).seq = 0;
+                let ex = (*header_mut).check;
                 (*header_mut).check = 0;
                 l4_csum += l4_csum_helper(&ctx);
                 (*header_mut).check = csum_fold_helper(l4_csum);
+                aya_log_ebpf::info!(
+                    &ctx,
+                    "Check sum expect: {} Got: {} Diff: {}:{} total: {}",
+                    ex,
+                    (*header_mut).check,
+                    ex as i32 - (*header_mut).check as i32,
+                    ex - (*header_mut).check,
+                    (*ipv).tot_len.to_be()
+                );
             }
             Ok(xdp_action::XDP_TX)
         } else if tcp_dport_in(host_port) || tcp_sport_in(remote_port) {
