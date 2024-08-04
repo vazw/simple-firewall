@@ -15,10 +15,6 @@ use crate::{
 };
 
 pub const PROTOCAL_OFFSET: usize = EthHdr::LEN + Ipv4Hdr::LEN;
-// 192.168.1.255
-pub const LOCAL_BROADCAST: u32 = 3232236031;
-// 255.255.255.255
-pub const BROADCAST: u32 = 4294967295;
 pub const ICMP_ECHO_REPLY: u8 = 0;
 pub const ICMP_DEST_UNREACH: u8 = 3;
 pub const ICMP_ECHO_REQUEST: u8 = 8;
@@ -98,19 +94,27 @@ pub fn l4_csum_helper(ctx: &XdpContext) -> u64 {
     let data = ctx.data() + offset;
     // end at last tcp options
     let data_end = ctx.data_end();
+    // let data_end = data + 60;
     for i in 0..MAX_CSUM_WORDS {
-        if data + 2 * i + 2 > data_end {
-            if data + 2 * i < data_end {
-                if let Ok(word) = unsafe {
-                    bpf_probe_read_kernel((data + 2 * i) as *const u8)
-                } {
-                    s += u16::from(word).swap_bytes() as u64;
-                }
+        if data + 4 * i + 4 > data_end {
+            if let Ok(word) =
+                unsafe { bpf_probe_read_kernel((data + 4 * i) as *const u16) }
+            {
+                s += word as u64;
+            } else if let Ok(word) =
+                unsafe { bpf_probe_read_kernel((data + 4 * i) as *const u8) }
+            {
+                s += word as u64;
             }
-            break; // should be unreachable
+            if let Ok(word) = unsafe {
+                bpf_probe_read_kernel((data + 4 * i + 2) as *const u8)
+            } {
+                s += word as u64;
+            }
+            break;
         }
         if let Ok(word) =
-            unsafe { bpf_probe_read_kernel((data + 2 * i) as *const u16) }
+            unsafe { bpf_probe_read_kernel((data + 4 * i) as *const u32) }
         {
             s += word as u64;
         }
