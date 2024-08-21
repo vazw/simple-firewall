@@ -13,13 +13,6 @@ pub struct Options {
     /// Set the endianness of the BPF target
     #[clap(default_value = "bpfel-unknown-none", long)]
     pub bpf_target: Architecture,
-    /// Build and run the release target
-    // #[clap(long)]
-    // pub release: bool,
-    /// The command used to wrap your application
-    // #[clap(short, long, default_value = "sudo cp")]
-    // pub runner: String,
-    /// Arguments to pass to your application
     #[clap(short, long, default_value = "/usr/bin/", name = "install path")]
     pub path: String,
 }
@@ -57,28 +50,44 @@ pub fn run(opts: Options) -> Result<(), anyhow::Error> {
     }
     println!("Installed simple-firewall on `{}`", install_path);
     // copy config
-    let mut args: Vec<_> = "sudo mkdir".trim().split_terminator(' ').collect();
-    args.push("-p");
-    args.push("/etc/sfw/");
-
-    // run the command
-    _ = Command::new(args.first().expect("No first argument"))
-        .args(args.iter().skip(1))
-        .status()
-        .expect("failed to run the command");
-
-    let mut args: Vec<_> = "sudo cp".trim().split_terminator(' ').collect();
-    args.push("./sfwconfig.toml");
-    args.push("/etc/sfw/sfwconfig.toml");
-    let status = Command::new(args.first().expect("No first argument"))
-        .args(args.iter().skip(1))
-        .status()
-        .expect("failed to run the command");
-
-    if !status.success() {
-        anyhow::bail!("Failed to copy config file `{}`", args.join(" "));
+    use std::io::{stdin, stdout, Write};
+    let mut s = String::new();
+    print!("Do you want to copy config file? [y]es/[n]o: ");
+    let _ = stdout().flush();
+    stdin()
+        .read_line(&mut s)
+        .expect("Did not enter a correct string");
+    if let Some('\n') = s.chars().next_back() {
+        s.pop();
     }
-    println!("Installed config on `/etc/sfw/sfwconfig.toml`");
+    if let Some('\r') = s.chars().next_back() {
+        s.pop();
+    }
+    if s.to_lowercase().eq("y") {
+        let mut args: Vec<_> =
+            "sudo mkdir".trim().split_terminator(' ').collect();
+        args.push("-p");
+        args.push("/etc/sfw/");
+
+        // run the command
+        _ = Command::new(args.first().expect("No first argument"))
+            .args(args.iter().skip(1))
+            .status()
+            .expect("failed to run the command");
+
+        let mut args: Vec<_> = "sudo cp".trim().split_terminator(' ').collect();
+        args.push("./sfwconfig.toml");
+        args.push("/etc/sfw/sfwconfig.toml");
+        let status = Command::new(args.first().expect("No first argument"))
+            .args(args.iter().skip(1))
+            .status()
+            .expect("failed to run the command");
+
+        if !status.success() {
+            anyhow::bail!("Failed to copy config file `{}`", args.join(" "));
+        }
+        println!("Installed config on `/etc/sfw/sfwconfig.toml`");
+    }
     println!(
         r"
 then make a auto-startup script for it with `sfw -i <NIC> -c <path-to-config.toml>`
