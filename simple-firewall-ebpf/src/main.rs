@@ -31,9 +31,6 @@ static mut CONNECTIONS: HashMap<u32, ConnectionState> =
 #[map(name = "UNKNOWN")]
 static mut UNKNOWN: HashMap<u32, ConnectionState> =
     HashMap::with_max_entries(256, 0);
-// #[map(name = "KNOWN")]
-// static mut KNOWN: HashMap<u32, ConnectionState> =
-//     HashMap::with_max_entries(256, 0);
 
 #[map(name = "TCP_IN_SPORT")]
 static mut TCP_IN_SPORT: Array<u8> =
@@ -95,11 +92,15 @@ fn try_simple_firewall(ctx: XdpContext) -> Result<u32, u32> {
             // Won't mess with DNS, mulicast and Broadcast
             if (host_addr.is_private()
                 || host_addr.is_unspecified()
-                || host_addr.is_multicast()
                 || matches!(host_addr.octets(), [.., 255]))
                 && (remote_addr.is_multicast()
                     || matches!(remote_addr.octets(), [.., 255]))
             // || remote_addr.is_private())
+            {
+                return Ok(xdp_action::XDP_PASS);
+            }
+            if host_addr.is_multicast()
+                && (remote_addr.is_multicast() || remote_addr.is_private())
             {
                 return Ok(xdp_action::XDP_PASS);
             }
