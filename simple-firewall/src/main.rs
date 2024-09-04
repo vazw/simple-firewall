@@ -271,7 +271,7 @@ async fn main() -> Result<(), anyhow::Error> {
                             let src_ip = Ipv4Addr::from(cons_.remote_ip);
                             let port = cons_.remote_port;
                             let protocal = if cons_.protocal == 6 {"TCP"} else {"UDP"};
-                            if connections.insert(data, ConnectionState::default(), 2).is_ok() {
+                            if connections.remove(&data).is_ok() {
                                 info!("Closing {} on {}:{}", protocal, src_ip.to_string(), &port);
                             } else {
                             // The connections maybe removed by `rst` signal
@@ -327,7 +327,7 @@ fn load_config(bpf: &mut Bpf, config: &Config) -> Result<(), anyhow::Error> {
         if let Some(n) = &tcp.sport {
             let mut tcp_in_port: Array<_, u8> =
                 Array::try_from(bpf.map_mut("TCP_IN_SPORT").unwrap())?;
-            for port in 0..u16::MAX as u32 {
+            for port in 0..65536 {
                 tcp_in_port.set(port, 0x0, 0)?;
             }
             for port in n {
@@ -338,7 +338,7 @@ fn load_config(bpf: &mut Bpf, config: &Config) -> Result<(), anyhow::Error> {
         if let Some(n) = &tcp.dport {
             let mut tcp_in_port: Array<_, u8> =
                 Array::try_from(bpf.map_mut("TCP_IN_DPORT").unwrap())?;
-            for port in 0..u16::MAX as u32 {
+            for port in 0..65536 {
                 tcp_in_port.set(port, 0x0, 0)?;
             }
             for port in n {
@@ -351,7 +351,7 @@ fn load_config(bpf: &mut Bpf, config: &Config) -> Result<(), anyhow::Error> {
         if let Some(n) = &tcp.sport {
             let mut tcp_out_port: Array<_, u8> =
                 Array::try_from(bpf.map_mut("TCP_OUT_SPORT").unwrap())?;
-            for port in 0..u16::MAX as u32 {
+            for port in 0..65536 {
                 tcp_out_port.set(port, 0x0, 0)?;
             }
             for port in n {
@@ -362,7 +362,7 @@ fn load_config(bpf: &mut Bpf, config: &Config) -> Result<(), anyhow::Error> {
         if let Some(n) = &tcp.dport {
             let mut tcp_out_port: Array<_, u8> =
                 Array::try_from(bpf.map_mut("TCP_OUT_DPORT").unwrap())?;
-            for port in 0..u16::MAX as u32 {
+            for port in 0..65536 {
                 tcp_out_port.set(port, 0x0, 0)?;
             }
             for port in n {
@@ -375,7 +375,7 @@ fn load_config(bpf: &mut Bpf, config: &Config) -> Result<(), anyhow::Error> {
         if let Some(n) = &udp.sport {
             let mut udp_in_port: Array<_, u8> =
                 Array::try_from(bpf.map_mut("UDP_IN_SPORT").unwrap())?;
-            for port in 0..u16::MAX as u32 {
+            for port in 0..65536 {
                 udp_in_port.set(port, 0x0, 0)?;
             }
             for port in n {
@@ -386,7 +386,7 @@ fn load_config(bpf: &mut Bpf, config: &Config) -> Result<(), anyhow::Error> {
         if let Some(n) = &udp.dport {
             let mut udp_in_port: Array<_, u8> =
                 Array::try_from(bpf.map_mut("UDP_IN_DPORT").unwrap())?;
-            for port in 0..u16::MAX as u32 {
+            for port in 0..65536 {
                 udp_in_port.set(port, 0x0, 0)?;
             }
             for port in n {
@@ -399,7 +399,7 @@ fn load_config(bpf: &mut Bpf, config: &Config) -> Result<(), anyhow::Error> {
         if let Some(n) = &udp.sport {
             let mut udp_out_port: Array<_, u8> =
                 Array::try_from(bpf.map_mut("UDP_OUT_SPORT").unwrap())?;
-            for port in 0..u16::MAX as u32 {
+            for port in 0..65536 {
                 udp_out_port.set(port, 0x0, 0)?;
             }
             for port in n {
@@ -410,7 +410,7 @@ fn load_config(bpf: &mut Bpf, config: &Config) -> Result<(), anyhow::Error> {
         if let Some(n) = &udp.dport {
             let mut udp_out_port: Array<_, u8> =
                 Array::try_from(bpf.map_mut("UDP_OUT_DPORT").unwrap())?;
-            for port in 0..u16::MAX as u32 {
+            for port in 0..65536 {
                 udp_out_port.set(port, 0x0, 0)?;
             }
             for port in n {
