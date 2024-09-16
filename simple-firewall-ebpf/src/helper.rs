@@ -68,24 +68,8 @@ pub fn csum_fold_helper(mut csum: u64) -> u16 {
     !(csum as u16)
 }
 
-// #[inline(always)]
-// pub fn l4_csum_fold_helper(mut csum: u32) -> u16 {
-//     for _i in 0..2 {
-//         if (csum >> 16) > 0 {
-//             csum = (csum & 0xffff) + (csum >> 16);
-//         }
-//     }
-//     !(csum as u16)
-// }
-//
-// #[inline(always)]
-// pub fn fold_helper(csum: u32) -> u32 {
-//     (csum & 0xffff) + (csum >> 16)
-// }
-
-// also Max header length
-const MAX_CSUM_WORDS: usize = 32;
-// const MAX_CSUM_BYTES: usize = MAX_CSUM_WORDS * 2;
+// Max header length
+const MAX_CSUM_WORDS: usize = 375;
 #[inline(always)]
 pub fn l4_csum_helper(ctx: &XdpContext) -> u64 {
     let mut s: u64 = 0;
@@ -113,6 +97,7 @@ pub fn l4_csum_helper(ctx: &XdpContext) -> u64 {
             }
             break;
         }
+        // READ 4 Bytes at a time.
         if let Ok(word) =
             unsafe { bpf_probe_read_kernel((data + 4 * i) as *const u32) }
         {
@@ -138,7 +123,7 @@ pub unsafe fn process_tcp_state_transition(
         return true;
     }
     // Check for SYN-ACK flood
-    if syn && ack {
+    if syn | (syn && ack) {
         let current_time = unsafe { bpf_ktime_get_ns() };
         // 1 second in nanoseconds
         if current_time - connection_state.last_syn_ack_time > 1_000_000_000 {
@@ -183,7 +168,9 @@ pub unsafe fn process_tcp_state_transition(
             if fin {
                 connection_state.tcp_state = TCPState::FinWait1;
                 return true;
-            } else if psh && ack {
+            } else if syn && ack {
+                // THIS IS CUSTOM HANDLER INDICATED THAT THIS SOMETHIONG IS WORNG
+                // AND FIREWALL SHOULD PROCESS THIS CONNECTION AGAIN WITH RESET
                 connection_state.tcp_state = TCPState::Listen;
                 return true;
             }
