@@ -119,7 +119,7 @@ pub fn handle_tcp_egress(
     } else if tcp_dport_out(remote_port) || tcp_sport_out(host_port) {
         add_request(&sums_key, &connection.into_state_sent());
         unsafe { NEW.output(&ctx, &connection, 0) };
-        aya_log_ebpf::debug!(
+        aya_log_ebpf::info!(
             &ctx,
             "TCP Bind {:i}:{} -> {:i}:{}",
             host_addr.to_bits(),
