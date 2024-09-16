@@ -140,16 +140,32 @@ pub fn handle_tcp_xdp(
                         l4_csum += l4_csum_helper(&ctx);
                         (*header_mut).check = csum_fold_helper(l4_csum);
                     };
+                    aya_log_ebpf::info!(
+                        &ctx,
+                        "XDP::TX TCP to {:i}:{}",
+                        remote_addr.to_bits(),
+                        remote_port,
+                    );
                     Ok(xdp_action::XDP_TX)
                 } else if transitioned
                     && unsafe {
                         !(*connection_state).tcp_state.eq(&TCPState::Closed)
                     }
                 {
-                    aya_log_ebpf::info!(&ctx, "DROPED UNKOWN STATE");
+                    aya_log_ebpf::info!(
+                        &ctx,
+                        "PASS NEW STATE on TCP from {:i}:{}",
+                        remote_addr.to_bits(),
+                        remote_port,
+                    );
                     Ok(xdp_action::XDP_PASS)
                 } else {
-                    aya_log_ebpf::info!(&ctx, "DROPED UNKOWN STATE");
+                    aya_log_ebpf::info!(
+                        &ctx,
+                        "DROP UNKNOWN on TCP from {:i}:{}",
+                        remote_addr.to_bits(),
+                        remote_port,
+                    );
                     Ok(xdp_action::XDP_DROP)
                 }
             }
