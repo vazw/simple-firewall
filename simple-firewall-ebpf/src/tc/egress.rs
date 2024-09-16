@@ -127,16 +127,6 @@ pub fn handle_tcp_egress(
             remote_addr.to_bits(),
             remote_port,
         );
-        // } else {
-        //     aya_log_ebpf::debug!(
-        //         &ctx,
-        //         "TCP Bind {:i}:{} -> {:i}:{} Failed",
-        //         host_addr.to_bits(),
-        //         host_port,
-        //         remote_addr.to_bits(),
-        //         remote_port,
-        //     );
-        // }
         Ok(TC_ACT_PIPE)
     } else {
         aya_log_ebpf::debug!(

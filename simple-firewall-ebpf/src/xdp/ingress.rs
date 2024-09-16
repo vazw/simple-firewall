@@ -85,30 +85,28 @@ pub fn handle_tcp_xdp(
                 };
                 if transitioned
                     && unsafe {
-                        !(*connection_state).tcp_state.eq(&TCPState::Closed)
-                    }
-                {
-                    Ok(xdp_action::XDP_PASS)
-                } else if transitioned
-                    && unsafe {
                         (*connection_state).tcp_state.eq(&TCPState::Listen)
                     }
                 {
                     let ethdr: *mut EthHdr = unsafe { ptr_at_mut(&ctx, 0)? };
-                    let src_mac = unsafe { (*ethdr).src_addr };
-                    let dst_mac = unsafe { (*ethdr).dst_addr };
                     unsafe {
+                        core::mem::swap(
+                            &mut (*ethdr).src_addr,
+                            &mut (*ethdr).dst_addr,
+                        );
+                        core::mem::swap(
+                            &mut (*ipv).src_addr,
+                            &mut (*ipv).dst_addr,
+                        );
+                        core::mem::swap(
+                            &mut (*header_mut).source,
+                            &mut (*header_mut).dest,
+                        );
                         (*header_mut).set_ack(0);
                         (*header_mut).set_syn(0);
                         (*header_mut).set_rst(1);
-                        (*header_mut).dest = connection.remote_port.to_be();
-                        (*header_mut).source = connection.host_port.to_be();
                         (*header_mut).ack_seq = 0;
                         (*header_mut).seq = 0;
-                        (*ethdr).src_addr = dst_mac;
-                        (*ethdr).dst_addr = src_mac;
-                        (*ipv).dst_addr = connection.remote_addr.to_be();
-                        (*ipv).src_addr = connection.host_addr.to_be();
                         (*ipv).check = 0;
                         let full_sum = bpf_csum_diff(
                             mem::MaybeUninit::zeroed().assume_init(),
@@ -143,7 +141,15 @@ pub fn handle_tcp_xdp(
                         (*header_mut).check = csum_fold_helper(l4_csum);
                     };
                     Ok(xdp_action::XDP_TX)
+                } else if transitioned
+                    && unsafe {
+                        !(*connection_state).tcp_state.eq(&TCPState::Closed)
+                    }
+                {
+                    aya_log_ebpf::info!(&ctx, "DROPED UNKOWN STATE");
+                    Ok(xdp_action::XDP_PASS)
                 } else {
+                    aya_log_ebpf::info!(&ctx, "DROPED UNKOWN STATE");
                     Ok(xdp_action::XDP_DROP)
                 }
             }
@@ -169,7 +175,7 @@ pub fn handle_tcp_xdp(
                     (*header_mut).set_syn(0);
                     (*header_mut).set_rst(1);
                     // Manual padding checksum :D
-                    (*header_mut).check += 12u16.to_be();
+                    // (*header_mut).check += 12u16.to_be();
                     if CONNECTIONS
                         .insert(&sums_key, &connection.into_state_listen(), 0)
                         .is_ok()
@@ -190,13 +196,13 @@ pub fn handle_tcp_xdp(
                 };
             }
             let ethdr: *mut EthHdr = unsafe { ptr_at_mut(&ctx, 0)? };
-            let src_mac = unsafe { (*ethdr).src_addr };
-            let dst_mac = unsafe { (*ethdr).dst_addr };
             unsafe {
-                (*ethdr).src_addr = dst_mac;
-                (*ethdr).dst_addr = src_mac;
-                (*ipv).dst_addr = connection.remote_addr.to_be();
-                (*ipv).src_addr = connection.host_addr.to_be();
+                core::mem::swap(&mut (*ethdr).src_addr, &mut (*ethdr).dst_addr);
+                core::mem::swap(&mut (*ipv).src_addr, &mut (*ipv).dst_addr);
+                core::mem::swap(
+                    &mut (*header_mut).source,
+                    &mut (*header_mut).dest,
+                );
                 (*ipv).check = 0;
                 let full_sum = bpf_csum_diff(
                     mem::MaybeUninit::zeroed().assume_init(),
@@ -223,8 +229,6 @@ pub fn handle_tcp_xdp(
                     pseudo_header.len() as u32 * 4,
                     0,
                 ) as u64;
-                (*header_mut).dest = connection.remote_port.to_be();
-                (*header_mut).source = connection.host_port.to_be();
                 (*header_mut).ack_seq =
                     (u32::from_be((*header_mut).seq) + 1).to_be();
                 (*header_mut).seq = 0;
@@ -266,14 +270,14 @@ pub fn handle_tcp_xdp(
             }
 
             let ethdr: *mut EthHdr = unsafe { ptr_at_mut(&ctx, 0)? };
-            let src_mac = unsafe { (*ethdr).src_addr };
-            let dst_mac = unsafe { (*ethdr).dst_addr };
             let ipv: *mut Ipv4Hdr = unsafe { ptr_at_mut(&ctx, EthHdr::LEN)? };
             unsafe {
-                (*ethdr).src_addr = dst_mac;
-                (*ethdr).dst_addr = src_mac;
-                (*ipv).dst_addr = connection.remote_addr.to_be();
-                (*ipv).src_addr = connection.host_addr.to_be();
+                core::mem::swap(&mut (*ethdr).src_addr, &mut (*ethdr).dst_addr);
+                core::mem::swap(&mut (*ipv).src_addr, &mut (*ipv).dst_addr);
+                core::mem::swap(
+                    &mut (*header_mut).source,
+                    &mut (*header_mut).dest,
+                );
                 (*ipv).check = 0;
                 let full_sum = bpf_csum_diff(
                     mem::MaybeUninit::zeroed().assume_init(),
@@ -303,8 +307,6 @@ pub fn handle_tcp_xdp(
                 ) as u64;
                 (*header_mut).set_ack(1);
                 (*header_mut).set_syn(1);
-                (*header_mut).dest = connection.remote_port.to_be();
-                (*header_mut).source = connection.host_port.to_be();
                 (*header_mut).ack_seq =
                     (u32::from_be((*header_mut).seq) + 1).to_be();
                 (*header_mut).seq = 0;
