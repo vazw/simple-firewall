@@ -182,7 +182,7 @@ async fn main() -> Result<(), anyhow::Error> {
     config_len = config_.len();
     _ = load_config(&mut bpf, &config_);
     let ring_buf = RingBuf::try_from(
-        bpf.take_map("INGRESS").expect("INGRESS map is exits"),
+        bpf.take_map("CONBUF").expect("INGRESS map is exits"),
     )?;
 
     let (tx, rx) = tokio::sync::watch::channel(false);
@@ -275,7 +275,7 @@ async fn main() -> Result<(), anyhow::Error> {
     // Send exit signal
     tx.send(true).unwrap();
     // wait task to done
-    t.await.unwrap();
+    _ = t.await.unwrap();
     info!("Exiting...");
     Ok(())
 }

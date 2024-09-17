@@ -43,7 +43,7 @@ pub fn handle_tcp_xdp(
         unsafe { CONNECTIONS.get_ptr_mut(&sums_key) }
     {
         if unsafe {
-            process_tcp_state_transition(header, &mut (*connection_state))
+            process_tcp_state_transition(header, &mut *connection_state)
         } {
             match unsafe { (*connection_state).tcp_state } {
                 TCPState::Closed => {
