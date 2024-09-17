@@ -74,6 +74,12 @@ pub fn handle_tcp_xdp(
                     }
                 {
                     unsafe { DEL.output(&ctx, &connection, 0) };
+                    aya_log_ebpf::info!(
+                        &ctx,
+                        "Closing TCP to {:i}:{}",
+                        remote_addr.to_bits(),
+                        remote_port,
+                    );
                 }
                 Ok(xdp_action::XDP_PASS)
             } else {
@@ -191,7 +197,7 @@ pub fn handle_tcp_xdp(
                     (*header_mut).set_syn(0);
                     (*header_mut).set_rst(1);
                     // Manual padding checksum :D
-                    // (*header_mut).check += 12u16.to_be();
+                    (*header_mut).check += 12u16.to_be();
                     if CONNECTIONS
                         .insert(&sums_key, &connection.into_state_listen(), 0)
                         .is_ok()
@@ -326,17 +332,14 @@ pub fn handle_tcp_xdp(
                 (*header_mut).ack_seq =
                     (u32::from_be((*header_mut).seq) + 1).to_be();
                 (*header_mut).seq = 0;
-                let ex = (*header_mut).check - 17u16.to_be();
                 (*header_mut).check = 0;
                 l4_csum += l4_csum_helper(&ctx);
                 (*header_mut).check = csum_fold_helper(l4_csum);
                 aya_log_ebpf::info!(
                     &ctx,
-                    "Check sum expect: {} Got: {} Diff: {}:{}",
-                    ex,
-                    (*header_mut).check,
-                    ex as i32 - (*header_mut).check as i32,
-                    ex - (*header_mut).check,
+                    "XDP::TX TCP to {:i}:{}",
+                    remote_addr.to_bits(),
+                    remote_port,
                 );
             }
             Ok(xdp_action::XDP_TX)
