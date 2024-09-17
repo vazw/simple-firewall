@@ -14,7 +14,7 @@ use network_types::{
 };
 use simple_firewall_common::{Connection, TCPState};
 
-use crate::{helper::*, CONNECTIONS, SENDE, TEMPORT, UNKNOWN};
+use crate::{helper::*, CONBUF, CONNECTIONS, TEMPORT, UNKNOWN};
 
 pub fn handle_tcp_xdp(
     ctx: XdpContext,
@@ -26,6 +26,7 @@ pub fn handle_tcp_xdp(
     let header_mut: *mut TcpHdr = unsafe { ptr_at_mut(&ctx, PROTOCAL_OFFSET)? };
     let header: &TcpHdr = unsafe { ptr_at(&ctx, PROTOCAL_OFFSET)? };
     let ip_len: u32 = (header.doff() as u32) << 2;
+
     // let data_off = header.doff();
     // external host_port comming from outside
     let remote_port = u16::from_be(header.source);
@@ -45,87 +46,82 @@ pub fn handle_tcp_xdp(
         if unsafe {
             process_tcp_state_transition(header, &mut *connection_state)
         } {
-            match unsafe { (*connection_state).tcp_state } {
-                TCPState::Closed => {
-                    _ = unsafe { CONNECTIONS.remove(&sums_key) };
-                    aya_log_ebpf::info!(
-                        &ctx,
-                        "Closing TCP to {:i}:{}",
-                        remote_addr.to_bits(),
-                        remote_port,
+            if unsafe { (*connection_state).tcp_state.eq(&TCPState::Closed) } {
+                _ = unsafe { CONNECTIONS.remove(&sums_key) };
+                aya_log_ebpf::info!(
+                    &ctx,
+                    "Closing TCP to {:i}:{}",
+                    remote_addr.to_bits(),
+                    remote_port,
+                );
+                Ok(XDP_PASS)
+            } else if unsafe {
+                (*connection_state).tcp_state.eq(&TCPState::Listen)
+            } {
+                let ethdr: *mut EthHdr = unsafe { ptr_at_mut(&ctx, 0)? };
+                unsafe {
+                    core::mem::swap(
+                        &mut (*ethdr).src_addr,
+                        &mut (*ethdr).dst_addr,
                     );
-                    Ok(XDP_PASS)
-                }
-                TCPState::Listen => {
-                    let ethdr: *mut EthHdr = unsafe { ptr_at_mut(&ctx, 0)? };
-                    unsafe {
-                        core::mem::swap(
-                            &mut (*ethdr).src_addr,
-                            &mut (*ethdr).dst_addr,
-                        );
-                        core::mem::swap(
-                            &mut (*ipv).src_addr,
-                            &mut (*ipv).dst_addr,
-                        );
-                        core::mem::swap(
-                            &mut (*header_mut).source,
-                            &mut (*header_mut).dest,
-                        );
-                        (*header_mut).set_ack(0);
-                        (*header_mut).set_syn(0);
-                        (*header_mut).set_rst(1);
-                        (*header_mut).ack_seq = 0;
-                        (*header_mut).seq = 0;
-                        (*ipv).check = 0;
-                        let full_sum = bpf_csum_diff(
-                            mem::MaybeUninit::zeroed().assume_init(),
-                            0,
-                            ipv as *mut u32,
-                            Ipv4Hdr::LEN as u32,
-                            0,
-                        ) as u64;
-                        (*ipv).check = csum_fold_helper(full_sum);
-                        // (*header_mut).check -= 17u16.to_be();
-                        // Manual padding checksum :D
-                        // (*header_mut).check += 12u16.to_be();
-                        let mut l4_csum: u64 = 0;
-                        let pseudo_header = [
-                            (connection.host_addr.to_be() >> 16),
-                            (connection.host_addr.to_be() & 0xFFFF),
-                            (connection.remote_addr.to_be() >> 16),
-                            (connection.remote_addr.to_be() & 0xFFFF),
-                            6u32.to_be(), // Protocol (TCP) in the correct position
-                            ip_len.to_be(), // TCP length in network byte order
-                        ];
-                        // Calculate checksum for pseudo-header
-                        l4_csum += bpf_csum_diff(
-                            mem::MaybeUninit::zeroed().assume_init(),
-                            0,
-                            pseudo_header.as_ptr() as *mut u32,
-                            pseudo_header.len() as u32 * 4,
-                            0,
-                        ) as u64;
-                        (*header_mut).check = 0;
-                        l4_csum += l4_csum_helper(&ctx);
-                        (*header_mut).check = csum_fold_helper(l4_csum);
-                    };
-                    aya_log_ebpf::info!(
-                        &ctx,
-                        "XDP::TX TCP to {:i}:{}",
-                        remote_addr.to_bits(),
-                        remote_port,
+                    core::mem::swap(&mut (*ipv).src_addr, &mut (*ipv).dst_addr);
+                    core::mem::swap(
+                        &mut (*header_mut).source,
+                        &mut (*header_mut).dest,
                     );
-                    Ok(xdp_action::XDP_TX)
-                }
-                _ => {
-                    aya_log_ebpf::info!(
-                        &ctx,
-                        "Pass Connection TCP to {:i}:{}",
-                        remote_addr.to_bits(),
-                        remote_port,
-                    );
-                    Ok(XDP_PASS)
-                }
+                    (*header_mut).set_ack(0);
+                    (*header_mut).set_syn(0);
+                    (*header_mut).set_rst(1);
+                    (*header_mut).ack_seq = 0;
+                    (*header_mut).seq = 0;
+                    (*ipv).check = 0;
+                    let full_sum = bpf_csum_diff(
+                        mem::MaybeUninit::zeroed().assume_init(),
+                        0,
+                        ipv as *mut u32,
+                        Ipv4Hdr::LEN as u32,
+                        0,
+                    ) as u64;
+                    (*ipv).check = csum_fold_helper(full_sum);
+                    // (*header_mut).check -= 17u16.to_be();
+                    // Manual padding checksum :D
+                    // (*header_mut).check += 12u16.to_be();
+                    let mut l4_csum: u64 = 0;
+                    let pseudo_header = [
+                        (connection.host_addr.to_be() >> 16),
+                        (connection.host_addr.to_be() & 0xFFFF),
+                        (connection.remote_addr.to_be() >> 16),
+                        (connection.remote_addr.to_be() & 0xFFFF),
+                        6u32.to_be(), // Protocol (TCP) in the correct position
+                        ip_len.to_be(), // TCP length in network byte order
+                    ];
+                    // Calculate checksum for pseudo-header
+                    l4_csum += bpf_csum_diff(
+                        mem::MaybeUninit::zeroed().assume_init(),
+                        0,
+                        pseudo_header.as_ptr() as *mut u32,
+                        pseudo_header.len() as u32 * 4,
+                        0,
+                    ) as u64;
+                    (*header_mut).check = 0;
+                    l4_csum += l4_csum_helper(&ctx);
+                    (*header_mut).check = csum_fold_helper(l4_csum);
+                };
+                aya_log_ebpf::info!(
+                    &ctx,
+                    "XDP::TX TCP to {:i}:{}",
+                    remote_addr.to_bits(),
+                    remote_port,
+                );
+                Ok(xdp_action::XDP_TX)
+            } else {
+                aya_log_ebpf::info!(
+                    &ctx,
+                    "Pass Connection TCP to {:i}:{}",
+                    remote_addr.to_bits(),
+                    remote_port,
+                );
+                Ok(XDP_PASS)
             }
         } else {
             match unsafe { (*connection_state).tcp_state } {
@@ -179,7 +175,7 @@ pub fn handle_tcp_xdp(
                 if UNKNOWN.remove(&connection.remote_addr).is_ok() {
                     aya_log_ebpf::info!(&ctx, "removed from unkown",);
                 }
-                match SENDE.reserve::<[u8; 16]>(0) {
+                match CONBUF.reserve::<[u8; 16]>(0) {
                     Some(mut event) => {
                         ptr::write_unaligned(
                             event.as_mut_ptr() as *mut _,

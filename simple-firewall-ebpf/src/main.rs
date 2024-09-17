@@ -32,7 +32,7 @@ static mut CONNECTIONS: HashMap<u32, ConnectionState> =
 static mut UNKNOWN: HashMap<u32, ConnectionState> =
     HashMap::with_max_entries(256, 0);
 #[map(name = "CONBUF")]
-static SENDE: RingBuf = RingBuf::with_byte_size(1638400, 0);
+static CONBUF: RingBuf = RingBuf::with_byte_size(1638400, 0);
 
 #[map(name = "TCP_IN_SPORT")]
 static mut TCP_IN_SPORT: Array<u8> =

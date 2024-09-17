@@ -7,7 +7,7 @@ use core::{net::Ipv4Addr, ptr};
 use network_types::{icmp::IcmpHdr, ip::IpProto, tcp::TcpHdr, udp::UdpHdr};
 use simple_firewall_common::{Connection, TCPState};
 
-use crate::{helper::*, SENDE, TEMPORT};
+use crate::{helper::*, CONBUF, TEMPORT};
 
 pub fn handle_udp_egress(
     ctx: TcContext,
@@ -64,7 +64,7 @@ pub fn handle_udp_egress(
             remote_addr.to_bits(),
             remote_port,
         );
-        match SENDE.reserve::<[u8; 16]>(0) {
+        match CONBUF.reserve::<[u8; 16]>(0) {
             Some(mut event) => {
                 unsafe {
                     ptr::write_unaligned(
@@ -120,7 +120,7 @@ pub fn handle_tcp_egress(
         if transitioned
             && unsafe { (*connection_state).tcp_state.eq(&TCPState::Closed) }
         {
-            match SENDE.reserve::<[u8; 16]>(0) {
+            match CONBUF.reserve::<[u8; 16]>(0) {
                 Some(mut event) => {
                     unsafe {
                         ptr::write_unaligned(
@@ -144,7 +144,7 @@ pub fn handle_tcp_egress(
         Ok(TC_ACT_PIPE)
     } else if tcp_dport_out(remote_port) || tcp_sport_out(host_port) {
         add_request(&sums_key, &connection.into_state_sent());
-        match SENDE.reserve::<[u8; 16]>(0) {
+        match CONBUF.reserve::<[u8; 16]>(0) {
             Some(mut event) => {
                 unsafe {
                     ptr::write_unaligned(

@@ -194,10 +194,10 @@ async fn main() -> Result<(), anyhow::Error> {
         // let mut rate_limit: PerCpuArray<_, u32> =
         //     PerCpuArray::try_from(bpf.take_map("RATE").expect("get map RATE"))?;
         let mut heart_reset: bool = false;
-        let mut conn: std::collections::HashMap<u32, Instant> =
-            std::collections::HashMap::with_capacity(262_144);
-        let mut connections: HashMap<_, u32, ConnectionState> =
-            HashMap::try_from(bpf.take_map("CONNECTIONS").unwrap())?;
+        // let mut conn: std::collections::HashMap<u32, Instant> =
+        //     std::collections::HashMap::with_capacity(262_144);
+        // let mut connections: HashMap<_, u32, ConnectionState> =
+        //     HashMap::try_from(bpf.take_map("CONNECTIONS").unwrap())?;
 
         loop {
             tokio::select! {
