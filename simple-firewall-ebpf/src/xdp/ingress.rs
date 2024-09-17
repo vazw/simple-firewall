@@ -123,27 +123,23 @@ pub fn handle_tcp_xdp(
                 );
                 Ok(XDP_PASS)
             }
+        } else if unsafe { (*connection_state).tcp_state.eq(&TCPState::Closed) }
+        {
+            aya_log_ebpf::info!(
+                &ctx,
+                "Drop Closed TCP to {:i}:{}",
+                remote_addr.to_bits(),
+                remote_port,
+            );
+            Ok(xdp_action::XDP_DROP)
         } else {
-            match unsafe { (*connection_state).tcp_state } {
-                TCPState::Closed => {
-                    aya_log_ebpf::info!(
-                        &ctx,
-                        "Drop Closed TCP to {:i}:{}",
-                        remote_addr.to_bits(),
-                        remote_port,
-                    );
-                    Ok(xdp_action::XDP_DROP)
-                }
-                _ => {
-                    aya_log_ebpf::info!(
-                        &ctx,
-                        "Pass unchanged TCP to {:i}:{}",
-                        remote_addr.to_bits(),
-                        remote_port,
-                    );
-                    Ok(XDP_PASS)
-                }
-            }
+            aya_log_ebpf::info!(
+                &ctx,
+                "Pass unchanged TCP to {:i}:{}",
+                remote_addr.to_bits(),
+                remote_port,
+            );
+            Ok(XDP_PASS)
         }
     } else if let Some(connection_state) =
         // new connections
