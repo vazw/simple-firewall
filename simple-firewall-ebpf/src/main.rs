@@ -9,7 +9,7 @@ use helper::*;
 use aya_ebpf::{
     bindings::{xdp_action, TC_ACT_PIPE},
     macros::{classifier, map, xdp},
-    maps::{Array, HashMap, PerfEventArray},
+    maps::{Array, HashMap, RingBuf},
     programs::{TcContext, XdpContext},
 };
 
@@ -17,7 +17,7 @@ use network_types::{
     eth::{EthHdr, EtherType},
     ip::{IpProto, Ipv4Hdr},
 };
-use simple_firewall_common::{Connection, ConnectionState};
+use simple_firewall_common::ConnectionState;
 
 use crate::tc::egress::{
     handle_icmp_egress, handle_tcp_egress, handle_udp_egress,
@@ -31,6 +31,8 @@ static mut CONNECTIONS: HashMap<u32, ConnectionState> =
 #[map(name = "UNKNOWN")]
 static mut UNKNOWN: HashMap<u32, ConnectionState> =
     HashMap::with_max_entries(256, 0);
+#[map(name = "SENDE")]
+static SENDE: RingBuf = RingBuf::with_byte_size(1638400, 0);
 
 #[map(name = "TCP_IN_SPORT")]
 static mut TCP_IN_SPORT: Array<u8> =
@@ -65,13 +67,6 @@ static mut DNS_ADDR: HashMap<u32, u8> = HashMap::with_max_entries(32, 0);
 
 #[map(name = "TEMPORT")]
 static mut TEMPORT: Array<u8> = Array::with_max_entries(u16::MAX as u32 + 1, 0);
-
-#[map(name = "NEW")]
-static mut NEW: PerfEventArray<Connection> =
-    PerfEventArray::with_max_entries(1600, 0);
-#[map(name = "DEL")]
-static mut DEL: PerfEventArray<Connection> =
-    PerfEventArray::with_max_entries(800, 0);
 
 #[xdp]
 pub fn sfw(ctx: XdpContext) -> u32 {

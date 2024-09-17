@@ -1,14 +1,11 @@
 #![allow(unreachable_code)]
 use std::net::Ipv4Addr;
 
-use aya::util::online_cpus;
-
 use anyhow::{Context, Ok};
-use aya::maps::{Array, AsyncPerfEventArray, HashMap};
+use aya::maps::{Array, HashMap, RingBuf};
 use aya::programs::{tc, SchedClassifier, TcAttachType, Xdp, XdpFlags};
 use aya::{include_bytes_aligned, Bpf};
 use aya_log::BpfLogger;
-use bytes::BytesMut;
 use clap::Parser;
 use figment::{
     providers::{Format, Toml},
@@ -17,6 +14,7 @@ use figment::{
 use log::{debug, info, warn};
 use serde::Deserialize;
 use simple_firewall_common::{Connection, ConnectionState};
+use tokio::io::unix::AsyncFd;
 use tokio::signal;
 use tokio::time::{interval, Duration, Instant};
 
@@ -183,109 +181,73 @@ async fn main() -> Result<(), anyhow::Error> {
     );
     config_len = config_.len();
     _ = load_config(&mut bpf, &config_);
-    let mut perf_array =
-        AsyncPerfEventArray::try_from(bpf.take_map("NEW").unwrap())?;
-    let mut del_array =
-        AsyncPerfEventArray::try_from(bpf.take_map("DEL").unwrap())?;
-    let (del_send, mut del_rev) = tokio::sync::mpsc::channel(256);
+    let ring_buf = RingBuf::try_from(
+        bpf.take_map("INGRESS").expect("INGRESS map is exits"),
+    )?;
 
-    for cpu_id in online_cpus()? {
-        let del_send = del_send.clone();
-        let mut perf_buf = perf_array.open(cpu_id, None)?;
-        let mut del_buf = del_array.open(cpu_id, None)?;
-        tokio::task::spawn(async move {
-            let mut u_connection: std::collections::HashMap<u32, Instant> =
-                std::collections::HashMap::new();
-            let mut buf = vec![BytesMut::with_capacity(16); 1536];
-            let mut buf_del = vec![BytesMut::with_capacity(2); 512];
-            loop {
-                let events = perf_buf
-                    .read_events(&mut buf)
-                    .await
-                    .expect("new conection event");
-                for event in buf.iter_mut().take(events.read) {
-                    let key =
-                        unsafe { &*(event.as_ptr() as *const Connection) };
-                    u_connection.insert(key.into_session(), Instant::now());
-                }
-                let events = del_buf
-                    .read_events(&mut buf_del)
-                    .await
-                    .expect("delete event");
-                for event in buf_del.iter_mut().take(events.read) {
-                    let key =
-                        unsafe { &*(event.as_ptr() as *const Connection) };
-                    u_connection.remove(&key.into_session());
-                }
-                for k in u_connection.clone().keys() {
-                    if let Some(v) = u_connection.get(k) {
-                        if v.elapsed().as_secs() == 180 {
-                            _ = u_connection.remove(k);
-                            del_send.send(*k).await?;
-                        }
-                    }
-                }
-            }
-
-            Ok::<_>(())
-        });
-    }
-    // let mut icmp_array = AsyncPerfEventArray::try_from(bpf.take_map("ICMP_EVENTS").unwrap())?;
-    // for cpu_id in online_cpus()? {
-    //     let mut perf_buf = icmp_array.open(cpu_id, None)?;
-    //     tokio::task::spawn(async move {
-    //         let mut buf = vec![BytesMut::with_capacity(1024); 10];
-    //         loop {
-    //             let events = perf_buf.read_events(&mut buf).await?;
-    //             for event in buf.iter_mut().take(events.read) {
-    //                 let key = unsafe { &*(event.as_ptr() as *const IcmpPacket) };
-    //                 let src_ip = Ipv4Addr::from(key.src_ip);
-    //                 let dst_ip = Ipv4Addr::from(key.dst_ip);
-    //                 info!("ICMP packet captured: {} -> {}", src_ip, dst_ip);
-    //             }
-    //         }
-    //
-    //         Ok::<_>(())
-    //     });
-    // }
-
-    _ = tokio::task::spawn(async move {
-        let mut interval_1 = interval(Duration::from_millis(1000));
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    let t = tokio::spawn(async move {
+        let mut rx = rx.clone();
+        let mut async_fd = AsyncFd::new(ring_buf).unwrap();
         let mut interval_2 = interval(Duration::from_millis(10));
         let mut heart_rate = interval(Duration::from_secs(1));
         // let mut rate_limit: PerCpuArray<_, u32> =
         //     PerCpuArray::try_from(bpf.take_map("RATE").expect("get map RATE"))?;
         let mut heart_reset: bool = false;
+        let mut conn: std::collections::HashMap<u32, Instant> =
+            std::collections::HashMap::with_capacity(262_144);
         let mut connections: HashMap<_, u32, ConnectionState> =
             HashMap::try_from(bpf.take_map("CONNECTIONS").unwrap())?;
+
         loop {
             tokio::select! {
-                _ = interval_1.tick() => {
-                    let con = del_rev.try_recv();
-                    if con.is_ok() {
-                        let data = con.unwrap();
-                        let cons_ = connections.get(&data, 0);
-                        if cons_.is_ok(){
-                            let cons_ = cons_.unwrap();
-                            // Check if connections still exits
-                            let src_ip = Ipv4Addr::from(cons_.remote_ip);
-                            let port = cons_.remote_port;
-                            let protocal = if cons_.protocal == 6 {"TCP"} else {"UDP"};
-                            if connections.remove(&data).is_ok() {
-                                info!("Closing {} on {}:{}", protocal, src_ip.to_string(), &port);
-                            } else {
-                            // The connections maybe removed by `rst` signal
-                                info!(
-                                    "Closed {}:{} on {}",
-                                    src_ip.to_string(),
-                                    port,
-                                    protocal
-                                );
-                            }
-                        }
+                _ = async_fd.readable_mut() => {
+                    let mut guard = async_fd.readable_mut().await.unwrap();
+                    let rb = guard.get_inner_mut();
+
+                    while let Some(read) = rb.next() {
+                        let data = read.as_ptr();
+                        let contrack = unsafe { std::ptr::read_unaligned::<Connection>(data as *const Connection) };
+                        debug!("{:#?}", contrack);
+
 
                     }
+                    guard.clear_ready();
+
                 }
+
+
+                _ = rx.changed() => {
+                        if *rx.borrow() {
+                            break;
+                        }
+                    }
+                // _ = interval_1.tick() => {
+                //     let con = del_rev.try_recv();
+                //     if con.is_ok() {
+                //         let data = con.unwrap();
+                //         let cons_ = connections.get(&data, 0);
+                //         if cons_.is_ok(){
+                //             let cons_ = cons_.unwrap();
+                //             // Check if connections still exits
+                //             let src_ip = Ipv4Addr::from(cons_.remote_ip);
+                //             let port = cons_.remote_port;
+                //             let protocal = if cons_.protocal == 6 {"TCP"} else {"UDP"};
+                //             if connections.remove(&data).is_ok() {
+                //                 info!("Closing {} on {}:{}", protocal, src_ip.to_string(), &port);
+                //             } else {
+                //             // The connections maybe removed by `rst` signal
+                //                 info!(
+                //                     "Closed {}:{} on {}",
+                //                     src_ip.to_string(),
+                //                     port,
+                //                     protocal
+                //                 );
+                //             }
+                //         }
+                //
+                //     }
+                // }
                 _ = interval_2.tick() => {
                     let new_config: Config
                         = Figment::new().merge(Toml::file(&opt.config)).extract()?;
@@ -307,7 +269,13 @@ async fn main() -> Result<(), anyhow::Error> {
         }
         Ok(())
     });
+
+    info!("Waiting for Ctrl-C...");
     signal::ctrl_c().await?;
+    // Send exit signal
+    tx.send(true).unwrap();
+    // wait task to done
+    t.await.unwrap();
     info!("Exiting...");
     Ok(())
 }
