@@ -34,7 +34,7 @@ pub fn handle_tcp_xdp(
     //     header_sums
     // );
     if let Some(header) = unsafe { header_mut.as_ref() } {
-        let ip_len: u32 = unsafe { (*ipv).tot_len as u32 };
+        let ip_len: u32 = (header.doff() as u32) << 2;
         // let data_off = header.doff();
         // external host_port comming from outside
         let remote_port = u16::from_be(header.source);
