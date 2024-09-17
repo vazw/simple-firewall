@@ -116,7 +116,7 @@ pub unsafe fn process_tcp_state_transition(
     let ack = hdr.ack() != 0;
     let fin = hdr.fin() != 0;
     let rst = hdr.rst() != 0;
-    let psh = hdr.psh() != 0;
+    // let psh = hdr.psh() != 0;
 
     if rst {
         connection_state.tcp_state = TCPState::Closed;
