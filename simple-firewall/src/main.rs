@@ -134,7 +134,10 @@ async fn main() -> Result<(), anyhow::Error> {
     }
 
     info!("Attaching sfw into XDP map");
-    let program: &mut Xdp = bpf.program_mut("sfw").unwrap().try_into()?;
+    let program: &mut Xdp = bpf
+        .program_mut("sfw")
+        .expect("function not found")
+        .try_into()?;
     program.unload().unwrap_or(());
     program.load()?;
     println!("{:#?}", program);
@@ -147,31 +150,13 @@ async fn main() -> Result<(), anyhow::Error> {
             ),
         ),
     );
-    //     {
-    //         info!("XDP Hardware Mode Enabled");
-    //     } else if .is_ok() {
-    //         info!("XDP DRV_MODE Mode Enabled");
-    //     } else if ).is_ok() {
-    //         info!("XDP Default Mode Enabled");
-    //     } else {
-    //         program.attach(&opt.iface, XdpFlags::SKB_MODE).context(
-    //             r"failed to attach the XDP program with default flags
-    // - try changing XdpFlags::default() to XdpFlags::SKB_MODE",
-    //         )?;
-    //         info!("XDP SKB_MODE Mode Enabled");
-    //     }
-
-    // DO WE HAVE TO ALLOCATE ARRAY FIRST?
-    // let mut connections: Array<_, ConnectionState> =
-    //     Array::try_from(bpf.map_mut("CONNECTIONS").unwrap())?;
-    // for i in 0..u16::MAX {
-    //     _ = connections.set(u32::from(i), ConnectionState::default(), 0);
-    // }
 
     info!("Attaching sfw_egress in to network traffic control classifier");
     _ = tc::qdisc_add_clsact(&opt.iface);
-    let egress_program: &mut SchedClassifier =
-        bpf.program_mut("sfw_egress").unwrap().try_into()?;
+    let egress_program: &mut SchedClassifier = bpf
+        .program_mut("sfw_egress")
+        .expect("egress function not found")
+        .try_into()?;
     egress_program.load()?;
     let tc_link = egress_program
         .attach(&opt.iface, TcAttachType::Egress)

@@ -1,7 +1,5 @@
 use aya_ebpf::{
-    bindings::xdp_action::{self, XDP_PASS},
-    helpers::bpf_csum_diff,
-    programs::XdpContext,
+    bindings::xdp_action, helpers::bpf_csum_diff, programs::XdpContext,
 };
 
 use core::{mem, net::Ipv4Addr, ptr};
@@ -67,7 +65,7 @@ pub fn handle_tcp_xdp(
                     remote_addr.to_bits(),
                     remote_port,
                 );
-                Ok(XDP_PASS)
+                Ok(xdp_action::XDP_PASS)
             } else if unsafe {
                 (*connection_state).tcp_state.eq(&TCPState::Listen)
             } {
@@ -131,7 +129,7 @@ pub fn handle_tcp_xdp(
                     remote_addr.to_bits(),
                     remote_port,
                 );
-                Ok(XDP_PASS)
+                Ok(xdp_action::XDP_PASS)
             }
         } else if unsafe { (*connection_state).tcp_state.eq(&TCPState::Closed) }
         {
@@ -149,7 +147,7 @@ pub fn handle_tcp_xdp(
                 remote_addr.to_bits(),
                 remote_port,
             );
-            Ok(XDP_PASS)
+            Ok(xdp_action::XDP_PASS)
         }
     } else if let Some(connection_state) =
         // new connections
