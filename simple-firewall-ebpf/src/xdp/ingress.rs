@@ -23,12 +23,9 @@ pub fn handle_tcp_xdp(
     protocal: IpProto,
 ) -> Result<u32, u32> {
     let ipv: *mut Ipv4Hdr = unsafe { ptr_at_mut(&ctx, EthHdr::LEN)? };
-    let header_mut: *mut TcpHdr = unsafe { ptr_at_mut(&ctx, PROTOCAL_OFFSET)? };
     let header: &TcpHdr = unsafe { ptr_at(&ctx, PROTOCAL_OFFSET)? };
     let ip_len: u32 = (header.doff() as u32) << 2;
 
-    // let data_off = header.doff();
-    // external host_port comming from outside
     let remote_port = u16::from_be(header.source);
     // someone reaching to internal host_port
     let host_port = u16::from_be(header.dest);
@@ -40,6 +37,7 @@ pub fn handle_tcp_xdp(
         protocal as u8,
     );
     let sums_key = connection.into_session();
+    let header_mut: *mut TcpHdr = unsafe { ptr_at_mut(&ctx, PROTOCAL_OFFSET)? };
     if let Some(connection_state) =
         unsafe { CONNECTIONS.get_ptr_mut(&sums_key) }
     {
@@ -61,12 +59,9 @@ pub fn handle_tcp_xdp(
             } {
                 let ethdr: *mut EthHdr = unsafe { ptr_at_mut(&ctx, 0)? };
                 unsafe {
-                    core::mem::swap(
-                        &mut (*ethdr).src_addr,
-                        &mut (*ethdr).dst_addr,
-                    );
-                    core::mem::swap(&mut (*ipv).src_addr, &mut (*ipv).dst_addr);
-                    core::mem::swap(
+                    mem::swap(&mut (*ethdr).src_addr, &mut (*ethdr).dst_addr);
+                    mem::swap(&mut (*ipv).src_addr, &mut (*ipv).dst_addr);
+                    mem::swap(
                         &mut (*header_mut).source,
                         &mut (*header_mut).dest,
                     );
@@ -195,9 +190,9 @@ pub fn handle_tcp_xdp(
         }
         let ethdr: *mut EthHdr = unsafe { ptr_at_mut(&ctx, 0)? };
         unsafe {
-            core::mem::swap(&mut (*ethdr).src_addr, &mut (*ethdr).dst_addr);
-            core::mem::swap(&mut (*ipv).src_addr, &mut (*ipv).dst_addr);
-            core::mem::swap(&mut (*header_mut).source, &mut (*header_mut).dest);
+            mem::swap(&mut (*ethdr).src_addr, &mut (*ethdr).dst_addr);
+            mem::swap(&mut (*ipv).src_addr, &mut (*ipv).dst_addr);
+            mem::swap(&mut (*header_mut).source, &mut (*header_mut).dest);
             (*ipv).check = 0;
             let full_sum = bpf_csum_diff(
                 mem::MaybeUninit::zeroed().assume_init(),
@@ -266,9 +261,9 @@ pub fn handle_tcp_xdp(
 
         let ethdr: *mut EthHdr = unsafe { ptr_at_mut(&ctx, 0)? };
         unsafe {
-            core::mem::swap(&mut (*ethdr).src_addr, &mut (*ethdr).dst_addr);
-            core::mem::swap(&mut (*ipv).src_addr, &mut (*ipv).dst_addr);
-            core::mem::swap(&mut (*header_mut).source, &mut (*header_mut).dest);
+            mem::swap(&mut (*ethdr).src_addr, &mut (*ethdr).dst_addr);
+            mem::swap(&mut (*ipv).src_addr, &mut (*ipv).dst_addr);
+            mem::swap(&mut (*header_mut).source, &mut (*header_mut).dest);
             (*ipv).check = 0;
             let full_sum = bpf_csum_diff(
                 mem::MaybeUninit::zeroed().assume_init(),

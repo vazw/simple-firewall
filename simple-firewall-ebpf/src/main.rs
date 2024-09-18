@@ -32,7 +32,7 @@ static mut CONNECTIONS: HashMap<u32, ConnectionState> =
 static mut UNKNOWN: HashMap<u32, ConnectionState> =
     HashMap::with_max_entries(256, 0);
 #[map(name = "CONBUF")]
-static CONBUF: RingBuf = RingBuf::with_byte_size(1638400, 0);
+static CONBUF: RingBuf = RingBuf::with_byte_size(16_777_216, 0);
 
 #[map(name = "TCP_IN_SPORT")]
 static mut TCP_IN_SPORT: Array<u8> =
@@ -99,7 +99,6 @@ fn try_simple_firewall(ctx: XdpContext) -> Result<u32, u32> {
             {
                 return Ok(xdp_action::XDP_PASS);
             }
-            // let size = unsafe { (*ipv).tot_len };
             match protocal {
                 IpProto::Tcp => {
                     handle_tcp_xdp(ctx, host_addr, remote_addr, protocal)
