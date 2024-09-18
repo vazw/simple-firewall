@@ -43,9 +43,10 @@ pub fn handle_tcp_xdp(
     if let Some(connection_state) =
         unsafe { CONNECTIONS.get_ptr_mut(&sums_key) }
     {
-        if unsafe {
-            process_tcp_state_transition(header, &mut *connection_state)
-        } {
+        let transitioned = unsafe {
+            process_tcp_state_transition(header, &mut (*connection_state))
+        };
+        if transitioned {
             if unsafe { (*connection_state).tcp_state.eq(&TCPState::Closed) } {
                 _ = unsafe { CONNECTIONS.remove(&sums_key) };
                 aya_log_ebpf::info!(
@@ -264,7 +265,6 @@ pub fn handle_tcp_xdp(
         }
 
         let ethdr: *mut EthHdr = unsafe { ptr_at_mut(&ctx, 0)? };
-        let ipv: *mut Ipv4Hdr = unsafe { ptr_at_mut(&ctx, EthHdr::LEN)? };
         unsafe {
             core::mem::swap(&mut (*ethdr).src_addr, &mut (*ethdr).dst_addr);
             core::mem::swap(&mut (*ipv).src_addr, &mut (*ipv).dst_addr);

@@ -137,19 +137,29 @@ async fn main() -> Result<(), anyhow::Error> {
     let program: &mut Xdp = bpf.program_mut("sfw").unwrap().try_into()?;
     program.unload().unwrap_or(());
     program.load()?;
-    if program.attach(&opt.iface, XdpFlags::HW_MODE).is_ok() {
-        info!("XDP Hardware Mode Enabled");
-    } else if program.attach(&opt.iface, XdpFlags::DRV_MODE).is_ok() {
-        info!("XDP DRV_MODE Mode Enabled");
-    } else if program.attach(&opt.iface, XdpFlags::default()).is_ok() {
-        info!("XDP Default Mode Enabled");
-    } else {
-        program.attach(&opt.iface, XdpFlags::SKB_MODE).context(
-            r"failed to attach the XDP program with default flags
-- try changing XdpFlags::default() to XdpFlags::SKB_MODE",
-        )?;
-        info!("XDP SKB_MODE Mode Enabled");
-    }
+    println!("{:#?}", program);
+    let xdp_link = program.attach(&opt.iface, XdpFlags::HW_MODE).unwrap_or(
+        program.attach(&opt.iface, XdpFlags::DRV_MODE).unwrap_or(
+            program.attach(&opt.iface, XdpFlags::default()).unwrap_or(
+                program
+                    .attach(&opt.iface, XdpFlags::SKB_MODE)
+                    .context(r"failed to attach the XDP program")?,
+            ),
+        ),
+    );
+    //     {
+    //         info!("XDP Hardware Mode Enabled");
+    //     } else if .is_ok() {
+    //         info!("XDP DRV_MODE Mode Enabled");
+    //     } else if ).is_ok() {
+    //         info!("XDP Default Mode Enabled");
+    //     } else {
+    //         program.attach(&opt.iface, XdpFlags::SKB_MODE).context(
+    //             r"failed to attach the XDP program with default flags
+    // - try changing XdpFlags::default() to XdpFlags::SKB_MODE",
+    //         )?;
+    //         info!("XDP SKB_MODE Mode Enabled");
+    //     }
 
     // DO WE HAVE TO ALLOCATE ARRAY FIRST?
     // let mut connections: Array<_, ConnectionState> =
@@ -163,13 +173,9 @@ async fn main() -> Result<(), anyhow::Error> {
     let egress_program: &mut SchedClassifier =
         bpf.program_mut("sfw_egress").unwrap().try_into()?;
     egress_program.load()?;
-    if egress_program
+    let tc_link = egress_program
         .attach(&opt.iface, TcAttachType::Egress)
-        .is_err()
-    {
-        warn!("failed to initialize sfw_egress");
-        warn!("FALLBACK TO SIMEPLE MODE");
-    }
+        .expect("failed to initialize sfw_egress");
 
     let mut config_len: u16;
     let config = Figment::new().merge(Toml::file(&opt.config));
@@ -267,15 +273,25 @@ async fn main() -> Result<(), anyhow::Error> {
                     }
             }
         }
-        Ok(())
+        Ok(bpf)
     });
 
     info!("Waiting for Ctrl-C...");
     signal::ctrl_c().await?;
     // Send exit signal
     tx.send(true).unwrap();
+    info!("Clearing task");
     // wait task to done
-    _ = t.await.unwrap();
+    let mut bpf = t.await.unwrap().expect("bpf returned");
+    let program: &mut Xdp = bpf.program_mut("sfw").unwrap().try_into()?;
+    if program.detach(xdp_link).is_ok() {
+        info!("detached xdp program");
+    }
+    let program: &mut SchedClassifier =
+        bpf.program_mut("sfw_egress").unwrap().try_into()?;
+    if program.detach(tc_link).is_ok() {
+        info!("detached xdp program");
+    }
     info!("Exiting...");
     Ok(())
 }
