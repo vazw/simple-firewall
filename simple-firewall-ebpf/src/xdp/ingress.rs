@@ -47,6 +47,20 @@ pub fn handle_tcp_xdp(
         if transitioned {
             if unsafe { (*connection_state).tcp_state.eq(&TCPState::Closed) } {
                 _ = unsafe { CONNECTIONS.remove(&sums_key) };
+                match CONBUF.reserve::<[u8; 16]>(0) {
+                    Some(mut event) => {
+                        unsafe {
+                            ptr::write_unaligned(
+                                event.as_mut_ptr() as *mut _,
+                                connection,
+                            );
+                        };
+                        event.submit(0);
+                    }
+                    None => {
+                        aya_log_ebpf::info!(&ctx, "Connot reserve ringbuffer")
+                    }
+                }
                 aya_log_ebpf::info!(
                     &ctx,
                     "Closing TCP to {:i}:{}",
@@ -167,19 +181,21 @@ pub fn handle_tcp_xdp(
                 if UNKNOWN.remove(&connection.remote_addr).is_ok() {
                     aya_log_ebpf::info!(&ctx, "removed from unkown",);
                 }
-                match CONBUF.reserve::<[u8; 16]>(0) {
-                    Some(mut event) => {
+            };
+            match CONBUF.reserve::<[u8; 16]>(0) {
+                Some(mut event) => {
+                    unsafe {
                         ptr::write_unaligned(
                             event.as_mut_ptr() as *mut _,
                             connection,
                         );
-                        event.submit(0);
-                    }
-                    None => {
-                        aya_log_ebpf::info!(&ctx, "Connot reserve ringbuffer")
-                    }
+                    };
+                    event.submit(0);
                 }
-            };
+                None => {
+                    aya_log_ebpf::info!(&ctx, "Connot reserve ringbuffer")
+                }
+            }
         } else if transitioned.eq(&TCPState::SynReceived) {
             aya_log_ebpf::info!(&ctx, "SynReceived",);
             unsafe {
