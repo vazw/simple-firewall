@@ -9,7 +9,7 @@ use helper::*;
 use aya_ebpf::{
     bindings::{xdp_action, TC_ACT_PIPE},
     macros::{classifier, map, xdp},
-    maps::{Array, HashMap, RingBuf},
+    maps::{Array, HashMap},
     programs::{TcContext, XdpContext},
 };
 

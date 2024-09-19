@@ -3,7 +3,7 @@ use aya_ebpf::{
     programs::TcContext,
 };
 
-use core::{net::Ipv4Addr, ptr};
+use core::net::Ipv4Addr;
 use network_types::{icmp::IcmpHdr, ip::IpProto, tcp::TcpHdr, udp::UdpHdr};
 use simple_firewall_common::{Connection, TCPState};
 
