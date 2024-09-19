@@ -1,6 +1,7 @@
 use aya_ebpf::{
     bindings::xdp_action, helpers::bpf_csum_diff, programs::XdpContext,
 };
+use aya_log_ebpf::info;
 
 use core::{mem, net::Ipv4Addr, ptr};
 use network_types::{
@@ -12,7 +13,7 @@ use network_types::{
 };
 use simple_firewall_common::{Connection, TCPState};
 
-use crate::{helper::*, CONNECTIONS, TEMPORT, UNKNOWN};
+use crate::{helper::*, CONBUF, CONNECTIONS, TEMPORT, UNKNOWN};
 
 pub fn handle_tcp_xdp(
     ctx: XdpContext,
@@ -56,10 +57,10 @@ pub fn handle_tcp_xdp(
                 //         event.submit(0);
                 //     }
                 //     None => {
-                //         aya_log_ebpf::info!(&ctx, "Connot reserve ringbuffer")
+                //         info!(&ctx, "Connot reserve ringbuffer")
                 //     }
                 // }
-                aya_log_ebpf::info!(
+                info!(
                     &ctx,
                     "Closing TCP to {:i}:{}",
                     remote_addr.to_bits(),
@@ -115,7 +116,7 @@ pub fn handle_tcp_xdp(
                     l4_csum += l4_csum_helper(&ctx);
                     (*header_mut).check = csum_fold_helper(l4_csum);
                 };
-                aya_log_ebpf::info!(
+                info!(
                     &ctx,
                     "XDP::TX TCP to {:i}:{}",
                     remote_addr.to_bits(),
@@ -123,7 +124,7 @@ pub fn handle_tcp_xdp(
                 );
                 Ok(xdp_action::XDP_TX)
             } else {
-                aya_log_ebpf::info!(
+                info!(
                     &ctx,
                     "Pass Connection TCP to {:i}:{}",
                     remote_addr.to_bits(),
@@ -133,7 +134,7 @@ pub fn handle_tcp_xdp(
             }
         } else if unsafe { (*connection_state).tcp_state.eq(&TCPState::Closed) }
         {
-            aya_log_ebpf::info!(
+            info!(
                 &ctx,
                 "Drop Closed TCP to {:i}:{}",
                 remote_addr.to_bits(),
@@ -141,7 +142,7 @@ pub fn handle_tcp_xdp(
             );
             Ok(xdp_action::XDP_DROP)
         } else {
-            aya_log_ebpf::info!(
+            info!(
                 &ctx,
                 "Pass unchanged TCP to {:i}:{}",
                 remote_addr.to_bits(),
@@ -154,7 +155,7 @@ pub fn handle_tcp_xdp(
         // will be handle here with agressive tcp rst on first try
         unsafe { UNKNOWN.get_ptr_mut(&connection.remote_addr) }
     {
-        aya_log_ebpf::info!(
+        info!(
             &ctx,
             "UNKNOWN on TCP from {:i}:{}",
             remote_addr.to_bits(),
@@ -163,7 +164,7 @@ pub fn handle_tcp_xdp(
         let transitioned =
             unsafe { agressive_tcp_rst(header, &mut (*connection_state)) };
         if transitioned.eq(&TCPState::Established) {
-            aya_log_ebpf::info!(&ctx, "Established",);
+            info!(&ctx, "Established",);
             unsafe {
                 (*header_mut).set_ack(0);
                 (*header_mut).set_syn(0);
@@ -174,28 +175,14 @@ pub fn handle_tcp_xdp(
                     .insert(&sums_key, &connection.into_state_listen(), 0)
                     .is_ok()
                 {
-                    aya_log_ebpf::info!(&ctx, "Added new con",);
+                    info!(&ctx, "Added new con",);
                 }
                 if UNKNOWN.remove(&connection.remote_addr).is_ok() {
-                    aya_log_ebpf::info!(&ctx, "removed from unkown",);
+                    info!(&ctx, "removed from unkown",);
                 }
             };
-            // match CONBUF.reserve::<[u8; 16]>(0) {
-            //     Some(mut event) => {
-            //         unsafe {
-            //             ptr::write_unaligned(
-            //                 event.as_mut_ptr() as *mut _,
-            //                 connection,
-            //             );
-            //         };
-            //         event.submit(0);
-            //     }
-            //     None => {
-            //         aya_log_ebpf::info!(&ctx, "Connot reserve ringbuffer")
-            //     }
-            // }
         } else if transitioned.eq(&TCPState::SynReceived) {
-            aya_log_ebpf::info!(&ctx, "SynReceived",);
+            info!(&ctx, "SynReceived",);
             unsafe {
                 (*header_mut).set_syn(1);
                 (*header_mut).check -= 17u16.to_be();
@@ -240,7 +227,7 @@ pub fn handle_tcp_xdp(
             (*header_mut).check = 0;
             l4_csum += l4_csum_helper(&ctx);
             (*header_mut).check = csum_fold_helper(l4_csum);
-            aya_log_ebpf::info!(
+            info!(
                 &ctx,
                 "Check sum expect: {} Got: {} Diff: {}:{} total: {}",
                 ex,
@@ -252,7 +239,21 @@ pub fn handle_tcp_xdp(
         }
         Ok(xdp_action::XDP_TX)
     } else if tcp_dport_in(host_port) || tcp_sport_in(remote_port) {
-        aya_log_ebpf::info!(
+        match CONBUF.reserve::<[u8; 16]>(0) {
+            Some(mut event) => {
+                unsafe {
+                    ptr::write_unaligned(
+                        event.as_mut_ptr() as *mut _,
+                        connection,
+                    );
+                }
+                event.submit(0);
+            }
+            None => {
+                info!(&ctx, "Connot reserve ringbuffer");
+            }
+        };
+        info!(
             &ctx,
             "TCP {:i}:{} <== {:i}:{}",
             host_addr.to_bits(),
@@ -313,7 +314,7 @@ pub fn handle_tcp_xdp(
             (*header_mut).check = 0;
             l4_csum += l4_csum_helper(&ctx);
             (*header_mut).check = csum_fold_helper(l4_csum);
-            aya_log_ebpf::info!(
+            info!(
                 &ctx,
                 "XDP::TX TCP to {:i}:{}",
                 remote_addr.to_bits(),
@@ -359,6 +360,17 @@ pub fn handle_udp_xdp(
         remote_port,
         protocal as u8,
     );
+    match CONBUF.reserve::<[u8; 16]>(0) {
+        Some(mut event) => {
+            unsafe {
+                ptr::write_unaligned(event.as_mut_ptr() as *mut _, connection);
+            }
+            event.submit(0);
+        }
+        None => {
+            info!(&ctx, "Connot reserve ringbuffer");
+        }
+    };
     let sum_key = connection.into_session();
     if is_requested(&sum_key).is_ok() {
         aya_log_ebpf::debug!(
