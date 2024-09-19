@@ -82,6 +82,8 @@ pub fn handle_tcp_xdp(
                 mem::swap(&mut (*header_mut).source, &mut (*header_mut).dest);
                 (*header_mut).set_ack(0);
                 (*header_mut).set_syn(0);
+                (*header_mut).set_psh(0);
+                (*header_mut).set_fin(0);
                 (*header_mut).set_rst(1);
                 (*header_mut).ack_seq = 0;
                 (*header_mut).seq = 0;
