@@ -140,16 +140,29 @@ async fn main() -> Result<(), anyhow::Error> {
         .try_into()?;
     program.unload().unwrap_or(());
     program.load()?;
-    println!("{:#?}", program);
-    let xdp_link = program.attach(&opt.iface, XdpFlags::HW_MODE).unwrap_or(
-        program.attach(&opt.iface, XdpFlags::DRV_MODE).unwrap_or(
-            program.attach(&opt.iface, XdpFlags::default()).unwrap_or(
-                program
-                    .attach(&opt.iface, XdpFlags::SKB_MODE)
-                    .context(r"failed to attach the XDP program")?,
-            ),
-        ),
-    );
+    let xdp_link = {
+        let link = program.attach(&opt.iface, XdpFlags::HW_MODE);
+        if link.is_ok() {
+            link.unwrap()
+        } else {
+            let link = program.attach(&opt.iface, XdpFlags::DRV_MODE);
+            if link.is_ok() {
+                link.unwrap()
+            } else {
+                let link = program.attach(&opt.iface, XdpFlags::default());
+                if link.is_ok() {
+                    link.unwrap()
+                } else {
+                    let link = program.attach(&opt.iface, XdpFlags::SKB_MODE);
+                    if link.is_ok() {
+                        link.unwrap()
+                    } else {
+                        return Ok(());
+                    }
+                }
+            }
+        }
+    };
 
     info!("Attaching sfw_egress in to network traffic control classifier");
     _ = tc::qdisc_add_clsact(&opt.iface);
