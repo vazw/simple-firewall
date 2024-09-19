@@ -11,7 +11,12 @@ use figment::{
     providers::{Format, Toml},
     Figment,
 };
+use log::LevelFilter;
 use log::{debug, info, warn};
+use log4rs::append::file::FileAppender;
+use log4rs::config::{Appender, Config, Root};
+use log4rs::encode::pattern::PatternEncoder;
+
 use serde::Deserialize;
 use simple_firewall_common::{Connection, ConnectionState};
 use tokio::io::unix::AsyncFd;
@@ -42,7 +47,7 @@ struct UdpOut {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-struct Config {
+struct AppConfig {
     pub dns: Option<Vec<String>>,
     pub tcp_in: Option<TcpIn>,
     pub tcp_out: Option<TcpOut>,
@@ -50,7 +55,7 @@ struct Config {
     pub udp_out: Option<UdpOut>,
 }
 
-impl Config {
+impl AppConfig {
     pub fn len(&self) -> u16 {
         let mut len: u16 = 0;
         if let Some(dns) = &self.dns {
@@ -103,8 +108,15 @@ struct Opt {
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     let opt = Opt::parse();
-    env_logger::init();
+    let logfile = FileAppender::builder()
+        .encoder(Box::new(PatternEncoder::new("{l} - {m}\n")))
+        .build("sfw.log")?;
 
+    let config = Config::builder()
+        .appender(Appender::builder().build("logfile", Box::new(logfile)))
+        .build(Root::builder().appender("logfile").build(LevelFilter::Info))?;
+
+    log4rs::init_config(config)?;
     // Bump the memlock rlimit. This is needed for older kernels that don't use the
     // new memcg based accounting, see https://lwn.net/Articles/837122/
     let rlim = libc::rlimit {
@@ -178,21 +190,21 @@ async fn main() -> Result<(), anyhow::Error> {
     let mut config_len: u16;
     let config = Figment::new().merge(Toml::file(&opt.config));
     // Parse dev env config here too
-    let config_: Config = config.extract().unwrap_or(
+    let config_: AppConfig = config.extract().unwrap_or(
         Figment::new()
             .merge(Toml::file("./sfwconfig.toml"))
             .extract()?,
     );
     config_len = config_.len();
     _ = load_config(&mut bpf, &config_);
-    let ring_buf = RingBuf::try_from(
-        bpf.take_map("CONBUF").expect("CONBUF ringbuffer is exits"),
-    )?;
+    // let ring_buf = RingBuf::try_from(
+    //     bpf.take_map("CONBUF").expect("CONBUF ringbuffer is exits"),
+    // )?;
 
     let (tx, rx) = tokio::sync::watch::channel(false);
     let t = tokio::spawn(async move {
         let mut rx = rx.clone();
-        let mut async_fd = AsyncFd::new(ring_buf).unwrap();
+        // let mut async_fd = AsyncFd::new(ring_buf).unwrap();
         let mut interval_2 = interval(Duration::from_millis(10));
         // let mut conn: std::collections::HashMap<u32, Instant> =
         //     std::collections::HashMap::with_capacity(262_144);
@@ -201,20 +213,20 @@ async fn main() -> Result<(), anyhow::Error> {
 
         loop {
             tokio::select! {
-                _ = async_fd.readable_mut() => {
-                    let mut guard = async_fd.readable_mut().await.unwrap();
-                    let rb = guard.get_inner_mut();
-
-                    while let Some(read) = rb.next() {
-                        let data = read.as_ptr();
-                        let contrack = unsafe { std::ptr::read_unaligned::<Connection>(data as *const Connection) };
-                        debug!("{:#?}", contrack);
-
-
-                    }
-                    guard.clear_ready();
-
-                }
+                // _ = async_fd.readable_mut() => {
+                //     let mut guard = async_fd.readable_mut().await.unwrap();
+                //     let rb = guard.get_inner_mut();
+                //
+                //     while let Some(read) = rb.next() {
+                //         let data = read.as_ptr();
+                //         let contrack = unsafe { std::ptr::read_unaligned::<Connection>(data as *const Connection) };
+                //         debug!("{:#?}", contrack);
+                //
+                //
+                //     }
+                //     guard.clear_ready();
+                //
+                // }
 
 
                 _ = rx.changed() => {
@@ -249,7 +261,7 @@ async fn main() -> Result<(), anyhow::Error> {
                 //     }
                 // }
                 _ = interval_2.tick() => {
-                    let new_config: Config
+                    let new_config: AppConfig
                         = Figment::new().merge(Toml::file(&opt.config)).extract()?;
                     if new_config.len() != config_len {
                         _ = load_config(&mut bpf, &new_config);
@@ -281,7 +293,7 @@ async fn main() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-fn load_config(bpf: &mut Bpf, config: &Config) -> Result<(), anyhow::Error> {
+fn load_config(bpf: &mut Bpf, config: &AppConfig) -> Result<(), anyhow::Error> {
     if let Some(dns) = &config.dns {
         let mut dns_list: HashMap<_, u32, u8> =
             HashMap::try_from(bpf.map_mut("DNS_ADDR").unwrap())?;
