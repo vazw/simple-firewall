@@ -7,7 +7,7 @@ use core::{net::Ipv4Addr, ptr};
 use network_types::{icmp::IcmpHdr, ip::IpProto, tcp::TcpHdr, udp::UdpHdr};
 use simple_firewall_common::{Connection, TCPState};
 
-use crate::{helper::*, CONBUF, TEMPORT};
+use crate::{helper::*, CONNECTIONS, TEMPORT};
 
 pub fn handle_udp_egress(
     ctx: TcContext,
@@ -64,20 +64,6 @@ pub fn handle_udp_egress(
             remote_addr.to_bits(),
             remote_port,
         );
-        match CONBUF.reserve::<[u8; 16]>(0) {
-            Some(mut event) => {
-                unsafe {
-                    ptr::write_unaligned(
-                        event.as_mut_ptr() as *mut _,
-                        connection,
-                    )
-                };
-                event.submit(0);
-            }
-            None => {
-                aya_log_ebpf::info!(&ctx, "Connot reserve ringbuffer")
-            }
-        }
         Ok(TC_ACT_PIPE)
     } else {
         aya_log_ebpf::debug!(
@@ -120,20 +106,13 @@ pub fn handle_tcp_egress(
         if transitioned
             && unsafe { (*connection_state).tcp_state.eq(&TCPState::Closed) }
         {
-            match CONBUF.reserve::<[u8; 16]>(0) {
-                Some(mut event) => {
-                    unsafe {
-                        ptr::write_unaligned(
-                            event.as_mut_ptr() as *mut _,
-                            connection,
-                        )
-                    };
-                    event.submit(0);
-                }
-                None => {
-                    aya_log_ebpf::info!(&ctx, "Connot reserve ringbuffer")
-                }
-            }
+            _ = unsafe { CONNECTIONS.remove(&sums_key) };
+            aya_log_ebpf::info!(
+                &ctx,
+                "EGRESS Closing TCP to {:i}:{}",
+                remote_addr.to_bits(),
+                remote_port,
+            );
         }
         aya_log_ebpf::debug!(
             &ctx,
@@ -144,20 +123,6 @@ pub fn handle_tcp_egress(
         Ok(TC_ACT_PIPE)
     } else if tcp_dport_out(remote_port) || tcp_sport_out(host_port) {
         add_request(&sums_key, &connection.into_state_sent());
-        match CONBUF.reserve::<[u8; 16]>(0) {
-            Some(mut event) => {
-                unsafe {
-                    ptr::write_unaligned(
-                        event.as_mut_ptr() as *mut _,
-                        connection,
-                    )
-                };
-                event.submit(0);
-            }
-            None => {
-                aya_log_ebpf::info!(&ctx, "Connot reserve ringbuffer")
-            }
-        }
         aya_log_ebpf::info!(
             &ctx,
             "TCP Bind {:i}:{} -> {:i}:{}",

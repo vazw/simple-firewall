@@ -110,7 +110,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let opt = Opt::parse();
     let logfile = FileAppender::builder()
         .encoder(Box::new(PatternEncoder::new("{l} - {m}\n")))
-        .build("sfw.log")?;
+        .build("/var/log/sfw.log")?;
 
     let config = Config::builder()
         .appender(Appender::builder().build("logfile", Box::new(logfile)))

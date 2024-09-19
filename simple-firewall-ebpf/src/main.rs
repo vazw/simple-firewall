@@ -27,12 +27,12 @@ use crate::xdp::ingress::{handle_icmp_xdp, handle_tcp_xdp, handle_udp_xdp};
 // Allocated 20KB for connection
 #[map(name = "CONNECTIONS")]
 static mut CONNECTIONS: HashMap<u32, ConnectionState> =
-    HashMap::with_max_entries(10_000, 0);
+    HashMap::with_max_entries(u16::MAX as u32 + 1, 0);
 #[map(name = "UNKNOWN")]
 static mut UNKNOWN: HashMap<u32, ConnectionState> =
     HashMap::with_max_entries(256, 0);
-#[map(name = "CONBUF")]
-static CONBUF: RingBuf = RingBuf::with_byte_size(16_777_216, 0);
+// #[map(name = "CONBUF")]
+// static CONBUF: RingBuf = RingBuf::with_byte_size(16_777_216, 0);
 
 #[map(name = "TCP_IN_SPORT")]
 static mut TCP_IN_SPORT: Array<u8> =

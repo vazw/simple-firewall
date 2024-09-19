@@ -13,7 +13,7 @@ use network_types::{
 };
 use simple_firewall_common::{Connection, TCPState};
 
-use crate::{helper::*, CONBUF, CONNECTIONS, TEMPORT, UNKNOWN};
+use crate::{helper::*, CONNECTIONS, TEMPORT, UNKNOWN};
 
 pub fn handle_tcp_xdp(
     ctx: XdpContext,
@@ -35,6 +35,17 @@ pub fn handle_tcp_xdp(
         remote_port,
         protocal as u8,
     );
+    // match CONBUF.reserve::<[u8; 16]>(0) {
+    //     Some(mut event) => {
+    //         unsafe {
+    //             ptr::write_unaligned(event.as_mut_ptr() as *mut _, connection);
+    //         }
+    //         event.submit(0);
+    //     }
+    //     None => {
+    //         info!(&ctx, "Connot reserve ringbuffer");
+    //     }
+    // };
     let sums_key = connection.into_session();
     let header_mut: *mut TcpHdr = unsafe { ptr_at_mut(&ctx, PROTOCAL_OFFSET)? };
     if let Some(connection_state) =
@@ -46,20 +57,6 @@ pub fn handle_tcp_xdp(
         if transitioned {
             if unsafe { (*connection_state).tcp_state.eq(&TCPState::Closed) } {
                 _ = unsafe { CONNECTIONS.remove(&sums_key) };
-                // match CONBUF.reserve::<[u8; 16]>(0) {
-                //     Some(mut event) => {
-                //         unsafe {
-                //             ptr::write_unaligned(
-                //                 event.as_mut_ptr() as *mut _,
-                //                 connection,
-                //             )
-                //         };
-                //         event.submit(0);
-                //     }
-                //     None => {
-                //         info!(&ctx, "Connot reserve ringbuffer")
-                //     }
-                // }
                 info!(
                     &ctx,
                     "Closing TCP to {:i}:{}",
@@ -239,20 +236,6 @@ pub fn handle_tcp_xdp(
         }
         Ok(xdp_action::XDP_TX)
     } else if tcp_dport_in(host_port) || tcp_sport_in(remote_port) {
-        match CONBUF.reserve::<[u8; 16]>(0) {
-            Some(mut event) => {
-                unsafe {
-                    ptr::write_unaligned(
-                        event.as_mut_ptr() as *mut _,
-                        connection,
-                    );
-                }
-                event.submit(0);
-            }
-            None => {
-                info!(&ctx, "Connot reserve ringbuffer");
-            }
-        };
         info!(
             &ctx,
             "TCP {:i}:{} <== {:i}:{}",
@@ -360,17 +343,6 @@ pub fn handle_udp_xdp(
         remote_port,
         protocal as u8,
     );
-    match CONBUF.reserve::<[u8; 16]>(0) {
-        Some(mut event) => {
-            unsafe {
-                ptr::write_unaligned(event.as_mut_ptr() as *mut _, connection);
-            }
-            event.submit(0);
-        }
-        None => {
-            info!(&ctx, "Connot reserve ringbuffer");
-        }
-    };
     let sum_key = connection.into_session();
     if is_requested(&sum_key).is_ok() {
         aya_log_ebpf::debug!(
