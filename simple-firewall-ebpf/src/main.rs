@@ -77,7 +77,7 @@ pub fn sfw(ctx: XdpContext) -> u32 {
 }
 
 fn try_simple_firewall(ctx: XdpContext) -> Result<u32, u32> {
-    let ethhdr: &EthHdr = unsafe { ptr_at(&ctx, 0)? }; //
+    let ethhdr: &EthHdr = unsafe { ptr_at(&ctx, 0)? };
     match ethhdr.ether_type {
         EtherType::Ipv4 => {
             let ipv: &Ipv4Hdr = unsafe { ptr_at(&ctx, EthHdr::LEN)? };

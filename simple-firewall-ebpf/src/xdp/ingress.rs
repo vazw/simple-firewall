@@ -51,7 +51,7 @@ pub fn handle_tcp_xdp(
                             ptr::write_unaligned(
                                 event.as_mut_ptr() as *mut _,
                                 connection,
-                            );
+                            )
                         };
                         event.submit(0);
                     }
