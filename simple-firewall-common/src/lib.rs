@@ -7,7 +7,8 @@ pub struct Connection {
     pub host_port: u16,
     pub remote_port: u16,
     pub protocal: u8,
-    _padding: [u8; 3],
+    pub state: u8,
+    _padding: [u8; 2],
 }
 
 #[cfg(feature = "user")]
@@ -62,7 +63,8 @@ impl Connection {
             host_port,
             remote_port,
             protocal,
-            _padding: [0u8; 3],
+            state: 0,
+            _padding: [0u8; 2],
         }
     }
 
@@ -83,7 +85,8 @@ impl Connection {
             host_port,
             remote_port,
             protocal,
-            _padding: [0u8; 3],
+            state: 0,
+            _padding: [0u8; 2],
         }
     }
 

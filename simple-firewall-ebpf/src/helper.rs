@@ -32,6 +32,7 @@ pub unsafe fn ptr_at<T>(ctx: &XdpContext, offset: usize) -> Result<&T, u32> {
     let data_ = unsafe { data.as_ref().ok_or(xdp_action::XDP_PASS)? };
     Ok(data_)
 }
+
 #[inline(always)]
 pub unsafe fn ptr_at_mut<T>(
     ctx: &XdpContext,
