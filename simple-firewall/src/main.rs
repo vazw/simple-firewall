@@ -186,7 +186,7 @@ async fn main() -> Result<(), anyhow::Error> {
     config_len = config_.len();
     _ = load_config(&mut bpf, &config_);
     let ring_buf = RingBuf::try_from(
-        bpf.take_map("CONBUF").expect("INGRESS map is exits"),
+        bpf.take_map("CONBUF").expect("CONBUF ringbuffer is exits"),
     )?;
 
     let (tx, rx) = tokio::sync::watch::channel(false);
@@ -194,10 +194,6 @@ async fn main() -> Result<(), anyhow::Error> {
         let mut rx = rx.clone();
         let mut async_fd = AsyncFd::new(ring_buf).unwrap();
         let mut interval_2 = interval(Duration::from_millis(10));
-        let mut heart_rate = interval(Duration::from_secs(1));
-        // let mut rate_limit: PerCpuArray<_, u32> =
-        //     PerCpuArray::try_from(bpf.take_map("RATE").expect("get map RATE"))?;
-        let mut heart_reset: bool = false;
         // let mut conn: std::collections::HashMap<u32, Instant> =
         //     std::collections::HashMap::with_capacity(262_144);
         // let mut connections: HashMap<_, u32, ConnectionState> =
@@ -259,16 +255,7 @@ async fn main() -> Result<(), anyhow::Error> {
                         _ = load_config(&mut bpf, &new_config);
                         config_len = new_config.len();
                     };
-
-                    if heart_reset {
-                        // rate_limit.set(0,PerCpuValues::try_from(vec![0u32;nr_cpus()?])?,0)?;
-                        heart_reset = false;
-                    }
-
                 }
-                _ = heart_rate.tick() => {
-                        heart_reset=true;
-                    }
             }
         }
         Ok(bpf)
