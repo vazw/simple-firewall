@@ -69,7 +69,7 @@ pub fn csum_fold_helper(mut csum: u64) -> u16 {
 }
 
 // Max header length
-const MAX_CSUM_WORDS: usize = 375;
+const MAX_CSUM_WORDS: usize = 20;
 #[inline(always)]
 pub fn l4_csum_helper(ctx: &XdpContext) -> u64 {
     let mut s: u64 = 0;
