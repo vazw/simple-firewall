@@ -107,88 +107,112 @@ pub fn handle_tcp_xdp(
         // will be handle here with agressive tcp rst on first try
         unsafe { UNKNOWN.get_ptr_mut(&connection.remote_addr) }
     {
-        info!(
-            &ctx,
-            "UNKNOWN on TCP from {:i}:{}",
-            remote_addr.to_bits(),
-            remote_port,
-        );
-        let transitioned =
-            unsafe { agressive_tcp_rst(header, &mut (*connection_state)) };
-        unsafe { (*connection_state).last_tcp_flag = tcp_flag };
-        if transitioned.eq(&TCPState::Established) {
-            info!(&ctx, "Established Sending rst to Reset connection",);
-            unsafe {
-                if (*header_mut).ack() != 0 {
-                    (*header_mut).set_ack(0);
-                }
-                if (*header_mut).syn() != 0 {
-                    (*header_mut).set_syn(0);
-                }
-                if (*header_mut).rst() != 1 {
-                    (*header_mut).set_rst(1);
-                }
-                if CONNECTIONS
-                    .insert(&sums_key, &connection.into_state_listen(), 0)
-                    .is_ok()
-                {
-                    info!(&ctx, "Added new con",);
-                }
-                if UNKNOWN.remove(&connection.remote_addr).is_ok() {
-                    info!(&ctx, "removed from unkown",);
-                }
-            };
-        } else if transitioned.eq(&TCPState::SynReceived) {
-            info!(&ctx, "SynReceived Sending syn ack back using TX",);
-            unsafe {
-                if (*header_mut).ack() != 1 {
-                    (*header_mut).set_ack(1);
-                }
-                if (*header_mut).syn() != 1 {
-                    (*header_mut).set_syn(1);
-                }
-            };
+        // info!(
+        //     &ctx,
+        //     "UNKNOWN on TCP from {:i}:{}",
+        //     remote_addr.to_bits(),
+        //     remote_port,
+        // );
+        _ = unsafe {
+            process_tcp_state_transition(
+                true,
+                &mut (*connection_state),
+                tcp_flag,
+            )
+        };
+        if u32::from_be(header.ack_seq) - 1 == sums_key {
+            info!(
+                &ctx,
+                "Correct cookies on TCP from {:i}:{}",
+                remote_addr.to_bits(),
+                remote_port,
+            );
+            Ok(xdp_action::XDP_PASS)
+        } else {
+            info!(
+                &ctx,
+                "Incorect cookies on TCP from {:i}:{} DROP",
+                remote_addr.to_bits(),
+                remote_port,
+            );
+            Ok(xdp_action::XDP_DROP)
         }
-        let ethdr: *mut EthHdr = unsafe { ptr_at_mut(&ctx, 0)? };
-        unsafe {
-            mem::swap(&mut (*ethdr).src_addr, &mut (*ethdr).dst_addr);
-            mem::swap(&mut (*ipv).src_addr, &mut (*ipv).dst_addr);
-            mem::swap(&mut (*header_mut).source, &mut (*header_mut).dest);
-            (*ipv).check = 0;
-            let full_sum = bpf_csum_diff(
-                mem::MaybeUninit::zeroed().assume_init(),
-                0,
-                ipv as *mut u32,
-                Ipv4Hdr::LEN as u32,
-                0,
-            ) as u64;
-            (*ipv).check = csum_fold_helper(full_sum);
-
-            let new_flag: u32 = (*header_mut)._bitfield_1.get(8, 6u8) as u32;
-            if let Some(check) = csum_diff(
-                &(tcp_flag as u32).to_be(),
-                &new_flag.to_be(),
-                !((*header_mut).check as u32),
-            ) {
-                (*header_mut).check = csum_fold(check);
-            }
-            if let Some(check) = csum_diff(
-                &header.ack_seq,
-                &(u32::from_be((*header_mut).seq) + 1).to_be(),
-                !((*header_mut).check as u32),
-            ) {
-                (*header_mut).check = csum_fold(check);
-                (*header_mut).ack_seq =
-                    (u32::from_be((*header_mut).seq) + 1).to_be();
-            }
-            if let Some(check) =
-                csum_diff(&header.seq, &0u32, !((*header_mut).check as u32))
-            {
-                (*header_mut).check = csum_fold(check);
-                (*header_mut).seq = 0;
-            }
-        }
-        Ok(xdp_action::XDP_TX)
+        // let transitioned =
+        //     unsafe { agressive_tcp_rst(header, &mut (*connection_state)) };
+        // unsafe { (*connection_state).last_tcp_flag = tcp_flag };
+        // if transitioned.eq(&TCPState::Established) {
+        //     info!(&ctx, "Established Sending rst to Reset connection",);
+        //     unsafe {
+        //         if (*header_mut).ack() != 0 {
+        //             (*header_mut).set_ack(0);
+        //         }
+        //         if (*header_mut).syn() != 0 {
+        //             (*header_mut).set_syn(0);
+        //         }
+        //         if (*header_mut).rst() != 1 {
+        //             (*header_mut).set_rst(1);
+        //         }
+        //         if CONNECTIONS
+        //             .insert(&sums_key, &connection.into_state_listen(), 0)
+        //             .is_ok()
+        //         {
+        //             info!(&ctx, "Added new con",);
+        //         }
+        //         if UNKNOWN.remove(&connection.remote_addr).is_ok() {
+        //             info!(&ctx, "removed from unkown",);
+        //         }
+        //     };
+        // } else if transitioned.eq(&TCPState::SynReceived) {
+        //     info!(&ctx, "SynReceived Sending syn ack back using TX",);
+        //     unsafe {
+        //         if (*header_mut).ack() != 1 {
+        //             (*header_mut).set_ack(1);
+        //         }
+        //         if (*header_mut).syn() != 1 {
+        //             (*header_mut).set_syn(1);
+        //         }
+        //     };
+        // }
+        // let ethdr: *mut EthHdr = unsafe { ptr_at_mut(&ctx, 0)? };
+        // unsafe {
+        //     mem::swap(&mut (*ethdr).src_addr, &mut (*ethdr).dst_addr);
+        //     mem::swap(&mut (*ipv).src_addr, &mut (*ipv).dst_addr);
+        //     mem::swap(&mut (*header_mut).source, &mut (*header_mut).dest);
+        //     (*ipv).check = 0;
+        //     let full_sum = bpf_csum_diff(
+        //         mem::MaybeUninit::zeroed().assume_init(),
+        //         0,
+        //         ipv as *mut u32,
+        //         Ipv4Hdr::LEN as u32,
+        //         0,
+        //     ) as u64;
+        //     (*ipv).check = csum_fold_helper(full_sum);
+        //
+        //     let new_flag: u32 = (*header_mut)._bitfield_1.get(8, 6u8) as u32;
+        //     if let Some(check) = csum_diff(
+        //         &(tcp_flag as u32).to_be(),
+        //         &new_flag.to_be(),
+        //         !((*header_mut).check as u32),
+        //     ) {
+        //         (*header_mut).check = csum_fold(check);
+        //     }
+        //     if let Some(check) = csum_diff(
+        //         &header.ack_seq,
+        //         &(u32::from_be((*header_mut).seq) + 1).to_be(),
+        //         !((*header_mut).check as u32),
+        //     ) {
+        //         (*header_mut).check = csum_fold(check);
+        //         (*header_mut).ack_seq =
+        //             (u32::from_be((*header_mut).seq) + 1).to_be();
+        //     }
+        //     if let Some(check) =
+        //         csum_diff(&header.seq, &0u32, !((*header_mut).check as u32))
+        //     {
+        //         (*header_mut).check = csum_fold(check);
+        //         (*header_mut).seq = 0;
+        //     }
+        // }
+        // Ok(xdp_action::XDP_TX)
     } else if (tcp_dport_in(host_port) || tcp_sport_in(remote_port))
         && header.syn() != 0
         && header.ack() == 0
@@ -254,25 +278,20 @@ pub fn handle_tcp_xdp(
                 (*header_mut).ack_seq =
                     (u32::from_be((*header_mut).seq) + 1).to_be();
             }
-            let cookie = bpf_tcp_gen_syncookie(
-                ctx.ctx as *mut _,
-                ipv as *mut _,
-                size_of::<Ipv4Hdr>() as u32,
-                header_mut as *mut _,
-                ip_len,
-            );
-            if let Some(check) =
-                csum_diff(&header.seq, &0, !((*header_mut).check as u32))
-            {
+            if let Some(check) = csum_diff(
+                &header.seq,
+                &sums_key.to_be(),
+                !((*header_mut).check as u32),
+            ) {
                 (*header_mut).check = csum_fold(check);
-                (*header_mut).seq = 0;
+                (*header_mut).seq = sums_key.to_be();
             }
             info!(
                 &ctx,
                 "XDP::TX TCP to {:i}:{} cookies {}",
                 remote_addr.to_bits(),
                 remote_port,
-                cookie
+                sums_key
             );
         }
         Ok(xdp_action::XDP_TX)
