@@ -332,17 +332,17 @@ pub fn handle_tcp_xdp(
             ) as u64;
             (*ipv).check = csum_fold_helper(full_sum);
 
-            // if (*header_mut).ack() != 1 {
-            //     if let Some(check) = csum_diff(
-            //         &(header.ack() as u32),
-            //         &1,
-            //         !((*header_mut).check as u32),
-            //     ) {
-            //         (*header_mut).check = csum_fold(check);
-            //         (*header_mut).set_ack(1);
-            //     }
-            // }
-            // if (*header_mut).syn() != 1 {
+            if (*header_mut).ack() == 0 {
+                if let Some(check) = csum_diff(
+                    &(header.ack() as u32),
+                    &1,
+                    !((*header_mut).check as u32),
+                ) {
+                    (*header_mut).check = csum_fold(check);
+                    (*header_mut).set_ack(1);
+                }
+            }
+            // if (*header_mut).syn() == 0 {
             //     if let Some(check) = csum_diff(
             //         &(header.syn() as u32),
             //         &1,
