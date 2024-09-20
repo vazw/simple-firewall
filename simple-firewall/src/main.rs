@@ -1,8 +1,8 @@
 #![allow(unreachable_code)]
 use std::net::Ipv4Addr;
 
-use anyhow::{Context, Ok};
-use aya::maps::{Array, HashMap, RingBuf};
+use anyhow::Ok;
+use aya::maps::{Array, HashMap};
 use aya::programs::{tc, SchedClassifier, TcAttachType, Xdp, XdpFlags};
 use aya::{include_bytes_aligned, Bpf};
 use aya_log::BpfLogger;
@@ -18,10 +18,8 @@ use log4rs::config::{Appender, Config, Root};
 use log4rs::encode::pattern::PatternEncoder;
 
 use serde::Deserialize;
-use simple_firewall_common::{Connection, ConnectionState};
-use tokio::io::unix::AsyncFd;
 use tokio::signal;
-use tokio::time::{interval, Duration, Instant};
+use tokio::time::{interval, Duration};
 
 #[derive(Debug, Clone, Deserialize)]
 struct TcpIn {
