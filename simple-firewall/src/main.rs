@@ -2,7 +2,7 @@
 use std::net::Ipv4Addr;
 
 use anyhow::Ok;
-use aya::maps::{Array, HashMap};
+use aya::maps::HashMap;
 use aya::programs::{tc, SchedClassifier, TcAttachType, Xdp, XdpFlags};
 use aya::{include_bytes_aligned, Bpf};
 use aya_log::BpfLogger;
@@ -307,97 +307,97 @@ fn load_config(bpf: &mut Bpf, config: &AppConfig) -> Result<(), anyhow::Error> {
     }
     if let Some(tcp) = &config.tcp_in {
         if let Some(n) = &tcp.sport {
-            let mut tcp_in_port: Array<_, u8> =
-                Array::try_from(bpf.map_mut("TCP_IN_SPORT").unwrap())?;
-            for port in 0..65536 {
-                tcp_in_port.set(port, 0x0, 0)?;
+            let mut tcp_in_port: HashMap<_, u16, u8> =
+                HashMap::try_from(bpf.map_mut("TCP_IN_SPORT").unwrap())?;
+            for port in 0..=65535 {
+                _ = tcp_in_port.remove(&port);
             }
             for port in n {
                 info!("Allow incomming from tcp port: {:?}", port);
-                tcp_in_port.set(u32::from(*port), 1u8, 0)?;
+                tcp_in_port.insert(port, 1u8, 0)?;
             }
         }
         if let Some(n) = &tcp.dport {
-            let mut tcp_in_port: Array<_, u8> =
-                Array::try_from(bpf.map_mut("TCP_IN_DPORT").unwrap())?;
-            for port in 0..65536 {
-                tcp_in_port.set(port, 0x0, 0)?;
+            let mut tcp_in_port: HashMap<_, u16, u8> =
+                HashMap::try_from(bpf.map_mut("TCP_IN_DPORT").unwrap())?;
+            for port in 0..=65535 {
+                _ = tcp_in_port.remove(&port);
             }
             for port in n {
                 info!("Allow incomming to tcp port: {:?}", port);
-                tcp_in_port.set(u32::from(*port), 1u8, 0)?;
+                tcp_in_port.insert(port, 1u8, 0)?;
             }
         }
     }
     if let Some(tcp) = &config.tcp_out {
         if let Some(n) = &tcp.sport {
-            let mut tcp_out_port: Array<_, u8> =
-                Array::try_from(bpf.map_mut("TCP_OUT_SPORT").unwrap())?;
-            for port in 0..65536 {
-                tcp_out_port.set(port, 0x0, 0)?;
+            let mut tcp_out_port: HashMap<_, u16, u8> =
+                HashMap::try_from(bpf.map_mut("TCP_OUT_SPORT").unwrap())?;
+            for port in 0..=65535 {
+                _ = tcp_out_port.remove(&port);
             }
             for port in n {
                 info!("Allow outgoing from tcp port: {:?}", port);
-                tcp_out_port.set(u32::from(*port), 1u8, 0)?;
+                tcp_out_port.insert(port, 1u8, 0)?;
             }
         }
         if let Some(n) = &tcp.dport {
-            let mut tcp_out_port: Array<_, u8> =
-                Array::try_from(bpf.map_mut("TCP_OUT_DPORT").unwrap())?;
-            for port in 0..65536 {
-                tcp_out_port.set(port, 0x0, 0)?;
+            let mut tcp_out_port: HashMap<_, u16, u8> =
+                HashMap::try_from(bpf.map_mut("TCP_OUT_DPORT").unwrap())?;
+            for port in 0..=65535 {
+                _ = tcp_out_port.remove(&port);
             }
             for port in n {
                 info!("Allow outgoing to tcp port: {:?}", port);
-                tcp_out_port.set(u32::from(*port), 1u8, 0)?;
+                tcp_out_port.insert(port, 1u8, 0)?;
             }
         }
     }
     if let Some(udp) = &config.udp_in {
         if let Some(n) = &udp.sport {
-            let mut udp_in_port: Array<_, u8> =
-                Array::try_from(bpf.map_mut("UDP_IN_SPORT").unwrap())?;
-            for port in 0..65536 {
-                udp_in_port.set(port, 0x0, 0)?;
+            let mut udp_in_port: HashMap<_, u16, u8> =
+                HashMap::try_from(bpf.map_mut("UDP_IN_SPORT").unwrap())?;
+            for port in 0..=65535 {
+                _ = udp_in_port.remove(&port);
             }
             for port in n {
                 info!("Allow incomming from udp port {:?}", port);
-                udp_in_port.set(u32::from(*port), 1u8, 0)?;
+                udp_in_port.insert(port, 1u8, 0)?;
             }
         }
         if let Some(n) = &udp.dport {
-            let mut udp_in_port: Array<_, u8> =
-                Array::try_from(bpf.map_mut("UDP_IN_DPORT").unwrap())?;
-            for port in 0..65536 {
-                udp_in_port.set(port, 0x0, 0)?;
+            let mut udp_in_port: HashMap<_, u16, u8> =
+                HashMap::try_from(bpf.map_mut("UDP_IN_DPORT").unwrap())?;
+            for port in 0..=65535 {
+                _ = udp_in_port.remove(&port);
             }
             for port in n {
                 info!("Allow incomming to udp port {:?}", port);
-                udp_in_port.set(u32::from(*port), 1u8, 0)?;
+                udp_in_port.insert(port, 1u8, 0)?;
             }
         }
     }
     if let Some(udp) = &config.udp_out {
         if let Some(n) = &udp.sport {
-            let mut udp_out_port: Array<_, u8> =
-                Array::try_from(bpf.map_mut("UDP_OUT_SPORT").unwrap())?;
-            for port in 0..65536 {
-                udp_out_port.set(port, 0x0, 0)?;
+            let mut udp_out_port: HashMap<_, u16, u8> =
+                HashMap::try_from(bpf.map_mut("UDP_OUT_SPORT").unwrap())?;
+            for port in 0..=65535 {
+                _ = udp_out_port.remove(&port);
             }
             for port in n {
                 info!("Allow outgoing from udp port {:?}", port);
-                udp_out_port.set(u32::from(*port), 1u8, 0)?;
+                udp_out_port.insert(port, 1u8, 0)?;
             }
         }
         if let Some(n) = &udp.dport {
-            let mut udp_out_port: Array<_, u8> =
-                Array::try_from(bpf.map_mut("UDP_OUT_DPORT").unwrap())?;
-            for port in 0..65536 {
-                udp_out_port.set(port, 0x0, 0)?;
+            let mut udp_out_port: HashMap<_, u16, u8> =
+                HashMap::try_from(bpf.map_mut("UDP_OUT_DPORT").unwrap())?;
+            for port in 0..=65535 {
+                _ = udp_out_port.remove(&port);
             }
             for port in n {
                 info!("Allow outgoing to udp port {:?}", port);
-                udp_out_port.set(u32::from(*port), 1u8, 0)?;
+                udp_out_port.insert(port, 1u8, 0)?;
             }
         }
     }
