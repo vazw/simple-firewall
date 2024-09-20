@@ -295,7 +295,10 @@ pub fn handle_tcp_xdp(
             }
         }
         Ok(xdp_action::XDP_TX)
-    } else if tcp_dport_in(host_port) || tcp_sport_in(remote_port) {
+    } else if (tcp_dport_in(host_port) || tcp_sport_in(remote_port))
+        && header.syn() != 0
+        && header.ack() == 0
+    {
         info!(
             &ctx,
             "TCP {:i}:{} <== {:i}:{}",
@@ -333,13 +336,15 @@ pub fn handle_tcp_xdp(
             (*ipv).check = csum_fold_helper(full_sum);
 
             if (*header_mut).ack() == 0 {
+                let tcp_flag = header._bitfield_1.get(8, 8);
+                (*header_mut).set_ack(1);
+                let new_flag = (*header_mut)._bitfield_1.get(8, 8);
                 if let Some(check) = csum_diff(
-                    &(header.ack() as u32),
-                    &1,
+                    &tcp_flag,
+                    &new_flag,
                     !((*header_mut).check as u32),
                 ) {
                     (*header_mut).check = csum_fold(check);
-                    (*header_mut).set_ack(1);
                 }
             }
             // if (*header_mut).syn() == 0 {
