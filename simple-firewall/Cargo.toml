@@ -15,7 +15,7 @@ libc = "0.2"
 log = "0.4"
 tokio = { version = "1.25", features = ["macros", "rt", "rt-multi-thread", "net", "signal", "time", "sync"] }
 figment = { version = "0.10.19", features = ["toml"] }
-network-types = "0.0.6"
+network-types = "0.0.7"
 bytes = "1.6.0"
 serde = { version = "1.0.204", features = ["derive"] }
 log4rs = "1.3.0"

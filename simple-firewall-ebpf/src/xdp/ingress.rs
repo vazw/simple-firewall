@@ -86,48 +86,58 @@ pub fn handle_tcp_xdp(
                     (*ipv).check = csum_fold_helper(full_sum);
                     if (*header_mut).ack() != 0 {
                         (*header_mut).set_ack(0);
-                        if let Some(check) =
-                            csum_diff(&1u32, &0u32, !(*header_mut).check as u32)
-                        {
+                        if let Some(check) = csum_diff(
+                            &1u32,
+                            &0u32,
+                            !((*header_mut).check as u32),
+                        ) {
                             (*header_mut).check = csum_fold(check)
                         }
                     }
                     if (*header_mut).syn() != 0 {
                         (*header_mut).set_syn(0);
-                        if let Some(check) =
-                            csum_diff(&1u32, &0u32, !(*header_mut).check as u32)
-                        {
+                        if let Some(check) = csum_diff(
+                            &1u32,
+                            &0u32,
+                            !((*header_mut).check as u32),
+                        ) {
                             (*header_mut).check = csum_fold(check)
                         }
                     }
                     if (*header_mut).psh() != 0 {
                         (*header_mut).set_psh(0);
-                        if let Some(check) =
-                            csum_diff(&1u32, &0u32, !(*header_mut).check as u32)
-                        {
+                        if let Some(check) = csum_diff(
+                            &1u32,
+                            &0u32,
+                            !((*header_mut).check as u32),
+                        ) {
                             (*header_mut).check = csum_fold(check)
                         }
                     }
                     if (*header_mut).fin() != 0 {
                         (*header_mut).set_fin(0);
-                        if let Some(check) =
-                            csum_diff(&1u32, &0u32, !(*header_mut).check as u32)
-                        {
+                        if let Some(check) = csum_diff(
+                            &1u32,
+                            &0u32,
+                            !((*header_mut).check as u32),
+                        ) {
                             (*header_mut).check = csum_fold(check)
                         }
                     }
                     if (*header_mut).rst() != 1 {
                         (*header_mut).set_rst(1);
-                        if let Some(check) =
-                            csum_diff(&0u32, &1u32, !(*header_mut).check as u32)
-                        {
+                        if let Some(check) = csum_diff(
+                            &0u32,
+                            &1u32,
+                            !((*header_mut).check as u32),
+                        ) {
                             (*header_mut).check = csum_fold(check)
                         }
                     }
                     if let Some(check) = csum_diff(
                         &header.ack_seq,
                         &0u32,
-                        !(*header_mut).check as u32,
+                        !((*header_mut).check as u32),
                     ) {
                         (*header_mut).check = csum_fold(check);
                         (*header_mut).ack_seq = 0;
@@ -135,10 +145,24 @@ pub fn handle_tcp_xdp(
                     if let Some(check) = csum_diff(
                         &header.seq,
                         &0u32,
-                        !(*header_mut).check as u32,
+                        !((*header_mut).check as u32),
                     ) {
                         (*header_mut).check = csum_fold(check);
                         (*header_mut).seq = 0;
+                    }
+                    if let Some(check) = csum_diff(
+                        &u32::from(header.source),
+                        &u32::from(header.dest),
+                        !((*header_mut).check as u32),
+                    ) {
+                        (*header_mut).check = csum_fold(check);
+                    }
+                    if let Some(check) = csum_diff(
+                        &u32::from(header.dest),
+                        &u32::from(header.source),
+                        !((*header_mut).check as u32),
+                    ) {
+                        (*header_mut).check = csum_fold(check);
                     }
                 };
                 info!(
@@ -195,7 +219,7 @@ pub fn handle_tcp_xdp(
                 if (*header_mut).ack() != 0 {
                     (*header_mut).set_ack(0);
                     if let Some(check) =
-                        csum_diff(&1u32, &0u32, !(*header_mut).check as u32)
+                        csum_diff(&1u32, &0u32, !((*header_mut).check as u32))
                     {
                         (*header_mut).check = csum_fold(check)
                     }
@@ -203,7 +227,7 @@ pub fn handle_tcp_xdp(
                 if (*header_mut).syn() != 0 {
                     (*header_mut).set_syn(0);
                     if let Some(check) =
-                        csum_diff(&1u32, &0u32, !(*header_mut).check as u32)
+                        csum_diff(&1u32, &0u32, !((*header_mut).check as u32))
                     {
                         (*header_mut).check = csum_fold(check)
                     }
@@ -211,7 +235,7 @@ pub fn handle_tcp_xdp(
                 if (*header_mut).rst() != 1 {
                     (*header_mut).set_rst(1);
                     if let Some(check) =
-                        csum_diff(&0u32, &1u32, !(*header_mut).check as u32)
+                        csum_diff(&0u32, &1u32, !((*header_mut).check as u32))
                     {
                         (*header_mut).check = csum_fold(check)
                     }
@@ -232,17 +256,17 @@ pub fn handle_tcp_xdp(
                 if (*header_mut).ack() != 1 {
                     (*header_mut).set_ack(1);
                     if let Some(check) =
-                        csum_diff(&0u32, &1u32, !(*header_mut).check as u32)
+                        csum_diff(&0u32, &1u32, !((*header_mut).check as u32))
                     {
-                        (*header_mut).check = csum_fold(check)
+                        (*header_mut).check = csum_fold(check);
                     }
                 }
                 if (*header_mut).syn() != 1 {
                     (*header_mut).set_syn(1);
                     if let Some(check) =
-                        csum_diff(&0u32, &1u32, !(*header_mut).check as u32)
+                        csum_diff(&0u32, &1u32, !((*header_mut).check as u32))
                     {
-                        (*header_mut).check = csum_fold(check)
+                        (*header_mut).check = csum_fold(check);
                     }
                 }
             };
@@ -264,17 +288,31 @@ pub fn handle_tcp_xdp(
             if let Some(check) = csum_diff(
                 &header.ack_seq,
                 &(u32::from_be((*header_mut).seq) + 1).to_be(),
-                !(*header_mut).check as u32,
+                !((*header_mut).check as u32),
             ) {
                 (*header_mut).check = csum_fold(check);
                 (*header_mut).ack_seq =
                     (u32::from_be((*header_mut).seq) + 1).to_be();
             }
             if let Some(check) =
-                csum_diff(&header.seq, &0u32, !(*header_mut).check as u32)
+                csum_diff(&header.seq, &0u32, !((*header_mut).check as u32))
             {
                 (*header_mut).check = csum_fold(check);
                 (*header_mut).seq = 0;
+            }
+            if let Some(check) = csum_diff(
+                &u32::from(header.source),
+                &u32::from(header.dest),
+                !((*header_mut).check as u32),
+            ) {
+                (*header_mut).check = csum_fold(check);
+            }
+            if let Some(check) = csum_diff(
+                &u32::from(header.dest),
+                &u32::from(header.source),
+                !((*header_mut).check as u32),
+            ) {
+                (*header_mut).check = csum_fold(check);
             }
         }
         Ok(xdp_action::XDP_TX)
@@ -318,7 +356,7 @@ pub fn handle_tcp_xdp(
             if (*header_mut).ack() != 1 {
                 (*header_mut).set_ack(1);
                 if let Some(check) =
-                    csum_diff(&0u32, &1u32, !(*header_mut).check as u32)
+                    csum_diff(&0u32, &1u32, !((*header_mut).check as u32))
                 {
                     (*header_mut).check = csum_fold(check)
                 }
@@ -326,7 +364,7 @@ pub fn handle_tcp_xdp(
             if (*header_mut).syn() != 1 {
                 (*header_mut).set_syn(1);
                 if let Some(check) =
-                    csum_diff(&0u32, &1u32, !(*header_mut).check as u32)
+                    csum_diff(&0u32, &1u32, !((*header_mut).check as u32))
                 {
                     (*header_mut).check = csum_fold(check)
                 }
@@ -334,17 +372,31 @@ pub fn handle_tcp_xdp(
             if let Some(check) = csum_diff(
                 &header.ack_seq,
                 &(u32::from_be((*header_mut).seq) + 1).to_be(),
-                !(*header_mut).check as u32,
+                !((*header_mut).check as u32),
             ) {
                 (*header_mut).check = csum_fold(check);
                 (*header_mut).ack_seq =
                     (u32::from_be((*header_mut).seq) + 1).to_be();
             }
             if let Some(check) =
-                csum_diff(&header.seq, &0u32, !(*header_mut).check as u32)
+                csum_diff(&header.seq, &0u32, !((*header_mut).check as u32))
             {
                 (*header_mut).check = csum_fold(check);
                 (*header_mut).seq = 0;
+            }
+            if let Some(check) = csum_diff(
+                &u32::from(header.source),
+                &u32::from(header.dest),
+                !((*header_mut).check as u32),
+            ) {
+                (*header_mut).check = csum_fold(check);
+            }
+            if let Some(check) = csum_diff(
+                &u32::from(header.dest),
+                &u32::from(header.source),
+                !((*header_mut).check as u32),
+            ) {
+                (*header_mut).check = csum_fold(check);
             }
             info!(
                 &ctx,

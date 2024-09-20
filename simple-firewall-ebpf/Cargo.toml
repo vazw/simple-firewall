@@ -7,7 +7,7 @@ edition = "2021"
 aya-ebpf = "0.1.0"
 aya-log-ebpf = "0.1.0"
 simple-firewall-common = { path = "../simple-firewall-common" }
-network-types = "0.0.6"
+network-types = "0.0.7"
 const-assert = "1.0.1"
 
 [[bin]]
