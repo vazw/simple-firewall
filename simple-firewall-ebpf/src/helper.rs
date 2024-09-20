@@ -119,7 +119,7 @@ pub unsafe fn process_tcp_state_transition(
     let rst = hdr.rst() != 0;
     // let psh = hdr.psh() != 0;
 
-    if rst {
+    if rst && !connection_state.tcp_state.eq(&TCPState::Listen) {
         connection_state.tcp_state = TCPState::Closed;
         return true;
     }
