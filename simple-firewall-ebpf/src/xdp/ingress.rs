@@ -127,6 +127,17 @@ pub fn handle_tcp_xdp(
                 remote_addr.to_bits(),
                 remote_port,
             );
+            unsafe {
+                if CONNECTIONS
+                    .insert(&sums_key, &connection.into_state_listen(), 0)
+                    .is_ok()
+                {
+                    info!(&ctx, "Added new con",);
+                }
+                if UNKNOWN.remove(&connection.remote_addr).is_ok() {
+                    info!(&ctx, "removed from unkown",);
+                }
+            }
             Ok(xdp_action::XDP_PASS)
         } else {
             info!(
