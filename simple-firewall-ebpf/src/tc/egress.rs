@@ -19,10 +19,7 @@ pub fn handle_udp_egress(
     let host_port = u16::from_be(udp_hdr.source);
     let remote_port = u16::from_be(udp_hdr.dest);
     if remote_addr.is_broadcast() {
-        if let Some(port_) = unsafe { TEMPORT.get_ptr_mut(remote_port as u32) }
-        {
-            unsafe { *port_ = 0x1 };
-        }
+        _ = unsafe { TEMPORT.insert(&remote_port, &1, 0) };
         return Ok(TC_ACT_PIPE);
     }
     let connection = Connection::egress(

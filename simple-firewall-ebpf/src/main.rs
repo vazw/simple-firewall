@@ -11,7 +11,7 @@ use helper::*;
 use aya_ebpf::{
     bindings::{xdp_action, TC_ACT_PIPE},
     macros::{classifier, map, xdp},
-    maps::{Array, HashMap},
+    maps::{HashMap, RingBuf},
     programs::{TcContext, XdpContext},
 };
 
@@ -37,38 +37,39 @@ static mut UNKNOWN: HashMap<u32, ConnectionState> =
 // static CONBUF: RingBuf = RingBuf::with_byte_size(16_777_216, 0);
 
 #[map(name = "TCP_IN_SPORT")]
-static mut TCP_IN_SPORT: Array<u8> =
-    Array::with_max_entries(u16::MAX as u32 + 1, 0);
+static mut TCP_IN_SPORT: HashMap<u16, u8> =
+    HashMap::with_max_entries(u16::MAX as u32 + 1, 0);
 #[map(name = "TCP_IN_DPORT")]
-static mut TCP_IN_DPORT: Array<u8> =
-    Array::with_max_entries(u16::MAX as u32 + 1, 0);
+static mut TCP_IN_DPORT: HashMap<u16, u8> =
+    HashMap::with_max_entries(u16::MAX as u32 + 1, 0);
 
 #[map(name = "TCP_OUT_SPORT")]
-static mut TCP_OUT_SPORT: Array<u8> =
-    Array::with_max_entries(u16::MAX as u32 + 1, 0);
+static mut TCP_OUT_SPORT: HashMap<u16, u8> =
+    HashMap::with_max_entries(u16::MAX as u32 + 1, 0);
 #[map(name = "TCP_OUT_DPORT")]
-static mut TCP_OUT_DPORT: Array<u8> =
-    Array::with_max_entries(u16::MAX as u32 + 1, 0);
+static mut TCP_OUT_DPORT: HashMap<u16, u8> =
+    HashMap::with_max_entries(u16::MAX as u32 + 1, 0);
 
 #[map(name = "UDP_IN_SPORT")]
-static mut UDP_IN_SPORT: Array<u8> =
-    Array::with_max_entries(u16::MAX as u32 + 1, 0);
+static mut UDP_IN_SPORT: HashMap<u16, u8> =
+    HashMap::with_max_entries(u16::MAX as u32 + 1, 0);
 #[map(name = "UDP_IN_DPORT")]
-static mut UDP_IN_DPORT: Array<u8> =
-    Array::with_max_entries(u16::MAX as u32 + 1, 0);
+static mut UDP_IN_DPORT: HashMap<u16, u8> =
+    HashMap::with_max_entries(u16::MAX as u32 + 1, 0);
 
 #[map(name = "UDP_OUT_SPORT")]
-static mut UDP_OUT_SPORT: Array<u8> =
-    Array::with_max_entries(u16::MAX as u32 + 1, 0);
+static mut UDP_OUT_SPORT: HashMap<u16, u8> =
+    HashMap::with_max_entries(u16::MAX as u32 + 1, 0);
 #[map(name = "UDP_OUT_DPORT")]
-static mut UDP_OUT_DPORT: Array<u8> =
-    Array::with_max_entries(u16::MAX as u32 + 1, 0);
+static mut UDP_OUT_DPORT: HashMap<u16, u8> =
+    HashMap::with_max_entries(u16::MAX as u32 + 1, 0);
 
 #[map(name = "DNS_ADDR")]
 static mut DNS_ADDR: HashMap<u32, u8> = HashMap::with_max_entries(32, 0);
 
 #[map(name = "TEMPORT")]
-static mut TEMPORT: Array<u8> = Array::with_max_entries(u16::MAX as u32 + 1, 0);
+static mut TEMPORT: HashMap<u16, u8> =
+    HashMap::with_max_entries(u16::MAX as u32 + 1, 0);
 
 #[xdp]
 pub fn sfw(ctx: XdpContext) -> u32 {

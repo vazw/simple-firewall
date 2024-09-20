@@ -3,7 +3,7 @@ use aya_ebpf::{
 };
 use aya_log_ebpf::info;
 
-use core::{mem, net::Ipv4Addr};
+use core::{mem, net::Ipv4Addr, ptr};
 use network_types::{
     eth::EthHdr,
     icmp::IcmpHdr,
@@ -36,17 +36,17 @@ pub fn handle_tcp_xdp(
         protocal as u8,
         tcp_flag,
     );
-    // match CONBUF.reserve::<[u8; 16]>(0) {
-    //     Some(mut event) => {
-    //         unsafe {
+    // unsafe {
+    //     match CONBUF.reserve::<[u8; 16]>(0) {
+    //         Some(mut event) => {
     //             ptr::write_unaligned(event.as_mut_ptr() as *mut _, connection);
+    //             event.submit(0);
     //         }
-    //         event.submit(0);
+    //         None => {
+    //             info!(&ctx, "Connot reserve ringbuffer");
+    //         }
     //     }
-    //     None => {
-    //         info!(&ctx, "Connot reserve ringbuffer");
-    //     }
-    // };
+    // }
     let sums_key = connection.into_session();
     let header_mut: *mut TcpHdr = unsafe { ptr_at_mut(&ctx, PROTOCAL_OFFSET)? };
     if let Some(connection_state) =
@@ -288,11 +288,9 @@ pub fn handle_udp_xdp(
     // external host_port comming from outside
     let remote_port = u16::from_be(header.source);
     // Allow to acsess is_broadcast request
-    if let Some(port_) = unsafe { TEMPORT.get_ptr_mut(remote_port as u32) } {
-        if unsafe { (*port_).eq(&0x1) } {
-            unsafe { *port_ = 0xff };
-            return Ok(xdp_action::XDP_PASS);
-        }
+    if unsafe { TEMPORT.get(&remote_port).is_some() } {
+        _ = unsafe { TEMPORT.remove(&remote_port) };
+        return Ok(xdp_action::XDP_PASS);
     }
     // someone reaching to internal host_port
     let host_port = u16::from_be(header.dest);

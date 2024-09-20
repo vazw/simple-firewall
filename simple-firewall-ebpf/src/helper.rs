@@ -324,39 +324,39 @@ pub fn add_request(session: &u32, connection_state: &ConnectionState) -> bool {
 
 #[inline(always)]
 pub fn tcp_sport_in(port: u16) -> bool {
-    unsafe { TCP_IN_SPORT.get(port as u32).is_some_and(|x| x.eq(&1_u8)) }
+    unsafe { TCP_IN_SPORT.get(&port).is_some() }
 }
 #[inline(always)]
 pub fn tcp_dport_in(port: u16) -> bool {
-    unsafe { TCP_IN_DPORT.get(port as u32).is_some_and(|x| x.eq(&1_u8)) }
+    unsafe { TCP_IN_DPORT.get(&port).is_some() }
 }
 
 #[inline(always)]
 pub fn tcp_sport_out(port: u16) -> bool {
-    unsafe { TCP_OUT_SPORT.get(port as u32).is_some_and(|x| x.eq(&1_u8)) }
+    unsafe { TCP_OUT_SPORT.get(&port).is_some() }
 }
 #[inline(always)]
 pub fn tcp_dport_out(port: u16) -> bool {
-    unsafe { TCP_OUT_DPORT.get(port as u32).is_some_and(|x| x.eq(&1_u8)) }
+    unsafe { TCP_OUT_DPORT.get(&port).is_some() }
 }
 
 #[inline(always)]
 pub fn udp_sport_in(port: u16) -> bool {
-    unsafe { UDP_IN_SPORT.get(port as u32).is_some_and(|x| x.eq(&1_u8)) }
+    unsafe { UDP_IN_SPORT.get(&port).is_some() }
 }
 #[inline(always)]
 pub fn udp_dport_in(port: u16) -> bool {
-    unsafe { UDP_IN_DPORT.get(port as u32).is_some_and(|x| x.eq(&1_u8)) }
+    unsafe { UDP_IN_DPORT.get(&port).is_some() }
 }
 
 #[inline(always)]
 pub fn udp_sport_out(port: u16) -> bool {
-    unsafe { UDP_OUT_SPORT.get(port as u32).is_some_and(|x| x.eq(&1_u8)) }
+    unsafe { UDP_OUT_SPORT.get(&port).is_some() }
 }
 
 #[inline(always)]
 pub fn udp_dport_out(port: u16) -> bool {
-    unsafe { UDP_OUT_DPORT.get(port as u32).is_some_and(|x| x.eq(&1_u8)) }
+    unsafe { UDP_OUT_DPORT.get(&port).is_some() }
 }
 
 #[inline(always)]
