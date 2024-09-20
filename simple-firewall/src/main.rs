@@ -106,16 +106,18 @@ struct Opt {
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     let opt = Opt::parse();
-    // let logfile = FileAppender::builder()
-    //     .encoder(Box::new(PatternEncoder::new("{l} - {m}\n")))
-    //     .build("/var/log/sfw.log")?;
-    //
-    // let config = Config::builder()
-    //     .appender(Appender::builder().build("logfile", Box::new(logfile)))
-    //     .build(Root::builder().appender("logfile").build(LevelFilter::Info))?;
-    //
-    // log4rs::init_config(config)?;
-    env_logger::init();
+    let logfile = FileAppender::builder()
+        .encoder(Box::new(PatternEncoder::new(
+            "{d(%Y-%m-%d %H:%M:%S)} - {l} - {f} - - {m}\n",
+        )))
+        .build("/var/log/sfw.log")?;
+
+    let config = Config::builder()
+        .appender(Appender::builder().build("logfile", Box::new(logfile)))
+        .build(Root::builder().appender("logfile").build(LevelFilter::Info))?;
+
+    log4rs::init_config(config)?;
+    // env_logger::init();
     // Bump the memlock rlimit. This is needed for older kernels that don't use the
     // new memcg based accounting, see https://lwn.net/Articles/837122/
     let rlim = libc::rlimit {
