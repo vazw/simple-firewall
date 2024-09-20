@@ -255,7 +255,7 @@ pub fn handle_tcp_xdp(
                     (u32::from_be((*header_mut).seq) + 1).to_be();
             }
             let cookie = bpf_tcp_gen_syncookie(
-                ctx.data() as *mut _,
+                ctx.ctx as *mut _,
                 ipv as *mut _,
                 size_of::<Ipv4Hdr>() as u32,
                 header_mut as *mut _,
