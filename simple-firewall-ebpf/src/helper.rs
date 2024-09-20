@@ -197,7 +197,7 @@ pub unsafe fn process_tcp_state_transition(
             }
         }
         TCPState::Established => {
-            if fin {
+            if fin && !ack {
                 connection_state.tcp_state = TCPState::FinWait1;
                 return true;
             } else if syn && ack {

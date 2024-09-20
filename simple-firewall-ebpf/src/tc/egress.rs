@@ -114,7 +114,7 @@ pub fn handle_tcp_egress(
                 remote_port,
             );
         }
-        aya_log_ebpf::debug!(
+        aya_log_ebpf::info!(
             &ctx,
             "ESTABLISHED on TCP with {:i}:{}",
             remote_addr.to_bits(),
@@ -133,7 +133,7 @@ pub fn handle_tcp_egress(
         );
         Ok(TC_ACT_PIPE)
     } else {
-        aya_log_ebpf::debug!(
+        aya_log_ebpf::info!(
             &ctx,
             "Not allowed {:i}:{} -x- {:i}:{}",
             host_addr.to_bits(),

@@ -328,7 +328,7 @@ pub fn handle_tcp_xdp(
         );
         Ok(xdp_action::XDP_TX)
     } else {
-        aya_log_ebpf::debug!(
+        aya_log_ebpf::info!(
             &ctx,
             "TCP DROP! {:i}:{} -x- {:i}:{}",
             host_addr.to_bits(),
