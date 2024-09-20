@@ -150,13 +150,13 @@ pub fn handle_tcp_xdp(
                         (*header_mut).check = csum_fold(check);
                         (*header_mut).seq = 0;
                     }
-                    if let Some(check) = csum_diff(
-                        &[header.source, header.dest],
-                        &[header.dest, header.source],
-                        !((*header_mut).check as u32),
-                    ) {
-                        (*header_mut).check = csum_fold(check);
-                    }
+                    // if let Some(check) = csum_diff(
+                    //     &[header.source, header.dest],
+                    //     &[header.dest, header.source],
+                    //     !((*header_mut).check as u32),
+                    // ) {
+                    //     (*header_mut).check = csum_fold(check);
+                    // }
                 };
                 info!(
                     &ctx,
@@ -293,13 +293,6 @@ pub fn handle_tcp_xdp(
                 (*header_mut).check = csum_fold(check);
                 (*header_mut).seq = 0;
             }
-            if let Some(check) = csum_diff(
-                &[header.source, header.dest],
-                &[header.dest, header.source],
-                !((*header_mut).check as u32),
-            ) {
-                (*header_mut).check = csum_fold(check);
-            }
         }
         Ok(xdp_action::XDP_TX)
     } else if tcp_dport_in(host_port) || tcp_sport_in(remote_port) {
@@ -339,28 +332,24 @@ pub fn handle_tcp_xdp(
             ) as u64;
             (*ipv).check = csum_fold_helper(full_sum);
 
-            if let Some(check) = csum_diff(
-                &[header.source, header.dest],
-                &[header.dest, header.source],
-                !((*header_mut).check as u32),
-            ) {
-                (*header_mut).check = csum_fold(check);
-            }
-
             if (*header_mut).ack() != 1 {
-                (*header_mut).set_ack(1);
-                if let Some(check) =
-                    csum_diff(&0u32, &1u32, !((*header_mut).check as u32))
-                {
-                    (*header_mut).check = csum_fold(check)
+                if let Some(check) = csum_diff(
+                    &(header.ack() as u32),
+                    &1,
+                    !((*header_mut).check as u32),
+                ) {
+                    (*header_mut).check = csum_fold(check);
+                    (*header_mut).set_ack(1);
                 }
             }
             if (*header_mut).syn() != 1 {
-                (*header_mut).set_syn(1);
-                if let Some(check) =
-                    csum_diff(&0u32, &1u32, !((*header_mut).check as u32))
-                {
-                    (*header_mut).check = csum_fold(check)
+                if let Some(check) = csum_diff(
+                    &(header.syn() as u32),
+                    &1,
+                    !((*header_mut).check as u32),
+                ) {
+                    (*header_mut).check = csum_fold(check);
+                    (*header_mut).set_syn(1);
                 }
             }
             if let Some(check) = csum_diff(
@@ -373,18 +362,18 @@ pub fn handle_tcp_xdp(
                     (u32::from_be((*header_mut).seq) + 1).to_be();
             }
             if let Some(check) =
-                csum_diff(&header.seq, &0u32, !((*header_mut).check as u32))
+                csum_diff(&header.seq, &0, !((*header_mut).check as u32))
             {
                 (*header_mut).check = csum_fold(check);
                 (*header_mut).seq = 0;
             }
-            info!(
-                &ctx,
-                "XDP::TX TCP to {:i}:{}",
-                remote_addr.to_bits(),
-                remote_port,
-            );
         }
+        info!(
+            &ctx,
+            "XDP::TX TCP to {:i}:{}",
+            remote_addr.to_bits(),
+            remote_port,
+        );
         Ok(xdp_action::XDP_TX)
     } else {
         aya_log_ebpf::debug!(
