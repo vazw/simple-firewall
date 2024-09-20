@@ -23,8 +23,7 @@ pub fn handle_tcp_xdp(
 ) -> Result<u32, u32> {
     let ipv: *mut Ipv4Hdr = unsafe { ptr_at_mut(&ctx, EthHdr::LEN)? };
     let header: &TcpHdr = unsafe { ptr_at(&ctx, PROTOCAL_OFFSET)? };
-    let tcp_flag: u32 = header._bitfield_1.get(8, 6u8) as u32;
-    // let ip_len: u32 = (header.doff() as u32) << 2;
+    let tcp_flag: u8 = header._bitfield_1.get(8, 6u8) as u8;
 
     let remote_port = u16::from_be(header.source);
     // someone reaching to internal host_port
@@ -35,6 +34,7 @@ pub fn handle_tcp_xdp(
         remote_addr.to_bits(),
         remote_port,
         protocal as u8,
+        tcp_flag,
     );
     // match CONBUF.reserve::<[u8; 16]>(0) {
     //     Some(mut event) => {
@@ -53,8 +53,13 @@ pub fn handle_tcp_xdp(
         unsafe { CONNECTIONS.get_ptr_mut(&sums_key) }
     {
         let transitioned = unsafe {
-            process_tcp_state_transition(header, &mut (*connection_state))
+            process_tcp_state_transition(
+                true,
+                &mut (*connection_state),
+                tcp_flag,
+            )
         };
+        unsafe { (*connection_state).last_tcp_flag = tcp_flag };
         if transitioned {
             if unsafe { (*connection_state).tcp_state.eq(&TCPState::Closed) } {
                 _ = unsafe { CONNECTIONS.remove(&sums_key) };
@@ -65,79 +70,6 @@ pub fn handle_tcp_xdp(
                     remote_port,
                 );
                 Ok(xdp_action::XDP_PASS)
-            } else if unsafe {
-                (*connection_state).tcp_state.eq(&TCPState::Listen)
-            } {
-                let ethdr: *mut EthHdr = unsafe { ptr_at_mut(&ctx, 0)? };
-                unsafe {
-                    mem::swap(&mut (*ethdr).src_addr, &mut (*ethdr).dst_addr);
-                    mem::swap(&mut (*ipv).src_addr, &mut (*ipv).dst_addr);
-                    mem::swap(
-                        &mut (*header_mut).source,
-                        &mut (*header_mut).dest,
-                    );
-                    (*ipv).check = 0;
-                    let full_sum = bpf_csum_diff(
-                        mem::MaybeUninit::zeroed().assume_init(),
-                        0,
-                        ipv as *mut u32,
-                        Ipv4Hdr::LEN as u32,
-                        0,
-                    ) as u64;
-                    (*ipv).check = csum_fold_helper(full_sum);
-
-                    if (*header_mut).ack() != 0 {
-                        (*header_mut).set_ack(0);
-                    }
-                    if (*header_mut).syn() != 0 {
-                        (*header_mut).set_syn(0);
-                    }
-                    if (*header_mut).psh() != 0 {
-                        (*header_mut).set_psh(0);
-                    }
-                    if (*header_mut).fin() != 0 {
-                        (*header_mut).set_fin(0);
-                    }
-                    if (*header_mut).rst() != 1 {
-                        (*header_mut).set_rst(1);
-                    }
-                    if let Some(check) = csum_diff(
-                        &header.ack_seq,
-                        &0u32,
-                        !((*header_mut).check as u32),
-                    ) {
-                        (*header_mut).check = csum_fold(check);
-                        (*header_mut).ack_seq = 0;
-                    }
-                    if let Some(check) = csum_diff(
-                        &header.seq,
-                        &0u32,
-                        !((*header_mut).check as u32),
-                    ) {
-                        (*header_mut).check = csum_fold(check);
-                        (*header_mut).seq = 0;
-                    }
-                    let new_flag: u32 =
-                        (*header_mut)._bitfield_1.get(8, 6u8) as u32;
-                    info!(
-                        &ctx,
-                        "changing tcp flag {} -> {}", tcp_flag, new_flag
-                    );
-                    if let Some(check) = csum_diff(
-                        &tcp_flag.to_be(),
-                        &new_flag.to_be(),
-                        !((*header_mut).check as u32),
-                    ) {
-                        (*header_mut).check = csum_fold(check);
-                    }
-                };
-                info!(
-                    &ctx,
-                    "XDP::TX TCP Incorrect state to {:i}:{}",
-                    remote_addr.to_bits(),
-                    remote_port,
-                );
-                Ok(xdp_action::XDP_TX)
             } else {
                 info!(
                     &ctx,
@@ -150,6 +82,7 @@ pub fn handle_tcp_xdp(
         // Not transitioned
         } else if unsafe { (*connection_state).tcp_state.eq(&TCPState::Closed) }
         {
+            _ = unsafe { CONNECTIONS.remove(&sums_key) };
             info!(
                 &ctx,
                 "Drop Closed TCP to {:i}:{}",
@@ -179,6 +112,7 @@ pub fn handle_tcp_xdp(
         );
         let transitioned =
             unsafe { agressive_tcp_rst(header, &mut (*connection_state)) };
+        unsafe { (*connection_state).last_tcp_flag = tcp_flag };
         if transitioned.eq(&TCPState::Established) {
             info!(&ctx, "Established",);
             unsafe {
@@ -230,7 +164,7 @@ pub fn handle_tcp_xdp(
             let new_flag: u32 = (*header_mut)._bitfield_1.get(8, 6u8) as u32;
             info!(&ctx, "changing tcp flag {} -> {}", tcp_flag, new_flag);
             if let Some(check) = csum_diff(
-                &tcp_flag.to_be(),
+                &(tcp_flag as u32).to_be(),
                 &new_flag.to_be(),
                 !((*header_mut).check as u32),
             ) {
@@ -303,7 +237,7 @@ pub fn handle_tcp_xdp(
             let new_flag: u32 = (*header_mut)._bitfield_1.get(8, 6u8) as u32;
             info!(&ctx, "changing tcp flag {} -> {}", tcp_flag, new_flag);
             if let Some(check) = csum_diff(
-                &tcp_flag.to_be(),
+                &(tcp_flag as u32).to_be(),
                 &new_flag.to_be(),
                 !((*header_mut).check as u32),
             ) {
@@ -370,6 +304,7 @@ pub fn handle_udp_xdp(
         remote_addr.to_bits(),
         remote_port,
         protocal as u8,
+        0,
     );
     let sum_key = connection.into_session();
     if is_requested(&sum_key).is_ok() {

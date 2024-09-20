@@ -31,6 +31,7 @@ pub fn handle_udp_egress(
         remote_addr.to_bits(),
         remote_port,
         protocal as u8,
+        0,
     );
     let sum_key = connection.into_session();
     if is_requested(&sum_key).is_ok() {
@@ -90,6 +91,7 @@ pub fn handle_tcp_egress(
     let tcp_hdr: &TcpHdr = unsafe { tc_ptr_at(&ctx, PROTOCAL_OFFSET)? };
     let host_port = u16::from_be(tcp_hdr.source);
     let remote_port = u16::from_be(tcp_hdr.dest);
+    let tcp_flag: u8 = tcp_hdr._bitfield_1.get(8, 6u8) as u8;
     // The source identifier
     let connection = Connection::egress(
         host_addr.to_bits(),
@@ -97,12 +99,18 @@ pub fn handle_tcp_egress(
         remote_addr.to_bits(),
         remote_port,
         protocal as u8,
+        tcp_flag,
     );
     let sums_key = connection.into_session();
     if let Ok(connection_state) = is_requested(&sums_key) {
         let transitioned = unsafe {
-            process_tcp_state_transition(tcp_hdr, &mut (*connection_state))
+            process_tcp_state_transition(
+                false,
+                &mut (*connection_state),
+                tcp_flag,
+            )
         };
+        unsafe { (*connection_state).last_tcp_flag = tcp_flag };
         if transitioned
             && unsafe { (*connection_state).tcp_state.eq(&TCPState::Closed) }
         {
