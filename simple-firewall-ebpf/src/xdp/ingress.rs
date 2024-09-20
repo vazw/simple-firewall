@@ -336,12 +336,13 @@ pub fn handle_tcp_xdp(
             (*ipv).check = csum_fold_helper(full_sum);
 
             if (*header_mut).ack() == 0 {
-                let tcp_flag = header._bitfield_1.get(7, 8);
+                let tcp_flag: u32 = header._bitfield_1.get(8, 8u8) as u32;
                 (*header_mut).set_ack(1);
-                let new_flag = (*header_mut)._bitfield_1.get(7, 8);
+                let new_flag: u32 =
+                    (*header_mut)._bitfield_1.get(8, 8u8) as u32;
                 if let Some(check) = csum_diff(
-                    &tcp_flag,
-                    &new_flag,
+                    &tcp_flag.to_be(),
+                    &new_flag.to_be(),
                     !((*header_mut).check as u32),
                 ) {
                     (*header_mut).check = csum_fold(check);
