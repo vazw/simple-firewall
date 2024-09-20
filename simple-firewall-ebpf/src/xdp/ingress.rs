@@ -1,7 +1,5 @@
 use aya_ebpf::{
-    bindings::xdp_action,
-    helpers::{bpf_csum_diff, bpf_tcp_check_syncookie, bpf_tcp_gen_syncookie},
-    programs::XdpContext,
+    bindings::xdp_action, helpers::bpf_csum_diff, programs::XdpContext,
 };
 use aya_log_ebpf::info;
 
@@ -26,7 +24,6 @@ pub fn handle_tcp_xdp(
     let ipv: *mut Ipv4Hdr = unsafe { ptr_at_mut(&ctx, EthHdr::LEN)? };
     let header: &TcpHdr = unsafe { ptr_at(&ctx, PROTOCAL_OFFSET)? };
     let tcp_flag: u8 = header._bitfield_1.get(8, 6u8) as u8;
-    let ip_len = (header.doff() as u32) << 2;
 
     let remote_port = u16::from_be(header.source);
     // someone reaching to internal host_port
@@ -146,6 +143,9 @@ pub fn handle_tcp_xdp(
                 remote_addr.to_bits(),
                 remote_port,
             );
+            if unsafe { UNKNOWN.remove(&connection.remote_addr).is_ok() } {
+                info!(&ctx, "removed from unkown",);
+            }
             Ok(xdp_action::XDP_DROP)
         }
         // let transitioned =
