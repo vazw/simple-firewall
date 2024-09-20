@@ -114,7 +114,7 @@ pub fn handle_tcp_xdp(
             unsafe { agressive_tcp_rst(header, &mut (*connection_state)) };
         unsafe { (*connection_state).last_tcp_flag = tcp_flag };
         if transitioned.eq(&TCPState::Established) {
-            info!(&ctx, "Established",);
+            info!(&ctx, "Established Sending rst to Reset connection",);
             unsafe {
                 if (*header_mut).ack() != 0 {
                     (*header_mut).set_ack(0);
@@ -136,7 +136,7 @@ pub fn handle_tcp_xdp(
                 }
             };
         } else if transitioned.eq(&TCPState::SynReceived) {
-            info!(&ctx, "SynReceived",);
+            info!(&ctx, "SynReceived Sending syn ack back using TX",);
             unsafe {
                 if (*header_mut).ack() != 1 {
                     (*header_mut).set_ack(1);
@@ -162,7 +162,6 @@ pub fn handle_tcp_xdp(
             (*ipv).check = csum_fold_helper(full_sum);
 
             let new_flag: u32 = (*header_mut)._bitfield_1.get(8, 6u8) as u32;
-            info!(&ctx, "changing tcp flag {} -> {}", tcp_flag, new_flag);
             if let Some(check) = csum_diff(
                 &(tcp_flag as u32).to_be(),
                 &new_flag.to_be(),
@@ -235,7 +234,6 @@ pub fn handle_tcp_xdp(
             }
 
             let new_flag: u32 = (*header_mut)._bitfield_1.get(8, 6u8) as u32;
-            info!(&ctx, "changing tcp flag {} -> {}", tcp_flag, new_flag);
             if let Some(check) = csum_diff(
                 &(tcp_flag as u32).to_be(),
                 &new_flag.to_be(),
