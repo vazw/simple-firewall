@@ -108,7 +108,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let opt = Opt::parse();
     let logfile = FileAppender::builder()
         .encoder(Box::new(PatternEncoder::new(
-            "{d(%Y-%m-%d %H:%M:%S)} - {l} - {f} - - {m}\n",
+            "{d(%Y-%m-%d %H:%M:%S)} - {l} - {f} - {m}\n",
         )))
         .build("/var/log/sfw.log")?;
 
