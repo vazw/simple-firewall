@@ -7,7 +7,7 @@ pub struct Connection {
     pub host_port: u16,
     pub remote_port: u16,
     pub protocal: u8,
-    pub state: u8,
+    pub tcp_flag: u8,
     _padding: [u8; 2],
 }
 
@@ -21,7 +21,7 @@ pub struct ConnectionState {
     pub remote_ip: u32,
     pub remote_port: u16,
     pub protocal: u8,
-    _padding_: u8,
+    pub last_tcp_flag: u8,
     pub tcp_state: TCPState,
 }
 
@@ -56,6 +56,7 @@ impl Connection {
         remote_addr: u32,
         remote_port: u16,
         protocal: u8,
+        tcp_flag: u8,
     ) -> Self {
         Connection {
             host_addr,
@@ -63,7 +64,7 @@ impl Connection {
             host_port,
             remote_port,
             protocal,
-            state: 0,
+            tcp_flag,
             _padding: [0u8; 2],
         }
     }
@@ -78,6 +79,7 @@ impl Connection {
         remote_addr: u32,
         remote_port: u16,
         protocal: u8,
+        tcp_flag: u8,
     ) -> Self {
         Connection {
             host_addr,
@@ -85,7 +87,7 @@ impl Connection {
             host_port,
             remote_port,
             protocal,
-            state: 0,
+            tcp_flag,
             _padding: [0u8; 2],
         }
     }
@@ -96,19 +98,6 @@ impl Connection {
         self.remote_addr
     }
     #[inline(always)]
-    pub fn into_state(&self) -> ConnectionState {
-        // USE REMOTE AS MAP VALUE
-        ConnectionState {
-            last_syn_ack_time: 0,
-            syn_ack_count: 0,
-            remote_ip: self.remote_addr,
-            remote_port: self.remote_port,
-            protocal: self.protocal,
-            tcp_state: TCPState::default(),
-            _padding_: 0xff,
-        }
-    }
-    #[inline(always)]
     pub fn into_state_sent(&self) -> ConnectionState {
         ConnectionState {
             last_syn_ack_time: 0,
@@ -117,7 +106,7 @@ impl Connection {
             remote_port: self.remote_port,
             protocal: self.protocal,
             tcp_state: TCPState::SynSent,
-            _padding_: 0xff,
+            last_tcp_flag: self.tcp_flag,
         }
     }
     #[inline(always)]
@@ -129,7 +118,7 @@ impl Connection {
             remote_port: self.remote_port,
             protocal: self.protocal,
             tcp_state: TCPState::Listen,
-            _padding_: 0xff,
+            last_tcp_flag: self.tcp_flag,
         }
     }
     #[inline(always)]
@@ -141,7 +130,7 @@ impl Connection {
             remote_port: self.remote_port,
             protocal: self.protocal,
             tcp_state: TCPState::SynReceived,
-            _padding_: 0xff,
+            last_tcp_flag: self.tcp_flag,
         }
     }
 }
