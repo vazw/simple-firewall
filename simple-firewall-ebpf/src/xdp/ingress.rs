@@ -151,15 +151,8 @@ pub fn handle_tcp_xdp(
                         (*header_mut).seq = 0;
                     }
                     if let Some(check) = csum_diff(
-                        &u32::from(header.source),
-                        &u32::from(connection.host_port.to_be()),
-                        !((*header_mut).check as u32),
-                    ) {
-                        (*header_mut).check = csum_fold(check);
-                    }
-                    if let Some(check) = csum_diff(
-                        &u32::from(header.dest),
-                        &u32::from(connection.remote_port.to_be()),
+                        &[header.source, header.dest],
+                        &[header.dest, header.source],
                         !((*header_mut).check as u32),
                     ) {
                         (*header_mut).check = csum_fold(check);
@@ -301,15 +294,8 @@ pub fn handle_tcp_xdp(
                 (*header_mut).seq = 0;
             }
             if let Some(check) = csum_diff(
-                &u32::from(header.source),
-                &u32::from(connection.host_port.to_be()),
-                !((*header_mut).check as u32),
-            ) {
-                (*header_mut).check = csum_fold(check);
-            }
-            if let Some(check) = csum_diff(
-                &u32::from(header.dest),
-                &u32::from(connection.remote_port.to_be()),
+                &[header.source, header.dest],
+                &[header.dest, header.source],
                 !((*header_mut).check as u32),
             ) {
                 (*header_mut).check = csum_fold(check);
@@ -352,16 +338,10 @@ pub fn handle_tcp_xdp(
                 0,
             ) as u64;
             (*ipv).check = csum_fold_helper(full_sum);
+
             if let Some(check) = csum_diff(
-                &u32::from(header.source),
-                &u32::from(connection.host_port.to_be()),
-                !((*header_mut).check as u32),
-            ) {
-                (*header_mut).check = csum_fold(check);
-            }
-            if let Some(check) = csum_diff(
-                &u32::from(header.dest),
-                &u32::from(connection.remote_port.to_be()),
+                &[header.source, header.dest],
+                &[header.dest, header.source],
                 !((*header_mut).check as u32),
             ) {
                 (*header_mut).check = csum_fold(check);
