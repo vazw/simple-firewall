@@ -23,7 +23,7 @@ pub fn handle_tcp_xdp(
 ) -> Result<u32, u32> {
     let ipv: *mut Ipv4Hdr = unsafe { ptr_at_mut(&ctx, EthHdr::LEN)? };
     let header: &TcpHdr = unsafe { ptr_at(&ctx, PROTOCAL_OFFSET)? };
-    let tcp_flag: u32 = header._bitfield_1.get(8, 8u8) as u32;
+    let tcp_flag: u32 = header._bitfield_1.get(8, 6u8) as u32;
     // let ip_len: u32 = (header.doff() as u32) << 2;
 
     let remote_port = u16::from_be(header.source);
@@ -118,7 +118,11 @@ pub fn handle_tcp_xdp(
                         (*header_mut).seq = 0;
                     }
                     let new_flag: u32 =
-                        (*header_mut)._bitfield_1.get(8, 8u8) as u32;
+                        (*header_mut)._bitfield_1.get(8, 6u8) as u32;
+                    info!(
+                        &ctx,
+                        "changing tcp flag {} -> {}", tcp_flag, new_flag
+                    );
                     if let Some(check) = csum_diff(
                         &tcp_flag.to_be(),
                         &new_flag.to_be(),
@@ -223,7 +227,8 @@ pub fn handle_tcp_xdp(
             ) as u64;
             (*ipv).check = csum_fold_helper(full_sum);
 
-            let new_flag: u32 = (*header_mut)._bitfield_1.get(8, 8u8) as u32;
+            let new_flag: u32 = (*header_mut)._bitfield_1.get(8, 6u8) as u32;
+            info!(&ctx, "changing tcp flag {} -> {}", tcp_flag, new_flag);
             if let Some(check) = csum_diff(
                 &tcp_flag.to_be(),
                 &new_flag.to_be(),
@@ -295,7 +300,8 @@ pub fn handle_tcp_xdp(
                 (*header_mut).set_syn(1);
             }
 
-            let new_flag: u32 = (*header_mut)._bitfield_1.get(8, 8u8) as u32;
+            let new_flag: u32 = (*header_mut)._bitfield_1.get(8, 6u8) as u32;
+            info!(&ctx, "changing tcp flag {} -> {}", tcp_flag, new_flag);
             if let Some(check) = csum_diff(
                 &tcp_flag.to_be(),
                 &new_flag.to_be(),
