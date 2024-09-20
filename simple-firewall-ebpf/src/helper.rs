@@ -1,9 +1,10 @@
 use aya_ebpf::bindings::TC_ACT_PIPE;
-use aya_ebpf::helpers::bpf_probe_read_kernel;
+use aya_ebpf::helpers::{bpf_csum_diff, bpf_probe_read_kernel};
 use aya_ebpf::programs::TcContext;
 use aya_ebpf::{
     bindings::xdp_action, helpers::bpf_ktime_get_ns, programs::XdpContext,
 };
+use const_assert::{Assert, IsTrue};
 use network_types::{eth::EthHdr, ip::Ipv4Hdr, tcp::TcpHdr};
 
 use core::mem;
@@ -59,6 +60,36 @@ pub unsafe fn tc_ptr_at<T>(ctx: &TcContext, offset: usize) -> Result<&T, i32> {
     let data_ = unsafe { data.as_ref().ok_or(TC_ACT_PIPE)? };
     Ok(data_)
 }
+
+#[inline(always)]
+pub fn csum_diff<T, U>(src: &T, dst: &U, seed: u32) -> Option<u32>
+where
+    Assert<{ size_of::<T>() % 4 == 0 }>: IsTrue,
+    Assert<{ size_of::<U>() % 4 == 0 }>: IsTrue,
+{
+    let src = src as *const _ as *mut u32;
+    let dst = dst as *const _ as *mut u32;
+    match unsafe {
+        bpf_csum_diff(
+            src,
+            size_of::<T>() as u32,
+            dst,
+            size_of::<U>() as u32,
+            seed,
+        )
+    } {
+        csum @ 0.. => Some(csum as u32),
+        _ => None,
+    }
+}
+
+#[inline(always)]
+pub fn csum_fold(mut csum: u32) -> u16 {
+    csum = (csum & 0xffff) + (csum >> 16);
+    csum = !((csum & 0xffff) + (csum >> 16));
+    csum as u16
+}
+
 #[inline(always)]
 pub fn csum_fold_helper(mut csum: u64) -> u16 {
     for _i in 0..4 {
@@ -68,45 +99,45 @@ pub fn csum_fold_helper(mut csum: u64) -> u16 {
     }
     !(csum as u16)
 }
-
-// Max header length
-const MAX_CSUM_WORDS: usize = 20;
-#[inline(always)]
-pub fn l4_csum_helper(ctx: &XdpContext) -> u64 {
-    let mut s: u64 = 0;
-    let offset = PROTOCAL_OFFSET;
-    // start at tcp header
-    let data = ctx.data() + offset;
-    // end at last tcp options
-    let data_end = ctx.data_end();
-    // let data_end = data + 60;
-    for i in 0..MAX_CSUM_WORDS {
-        if data + 4 * i + 4 > data_end {
-            if let Ok(word) =
-                unsafe { bpf_probe_read_kernel((data + 4 * i) as *const u16) }
-            {
-                s += word as u64;
-            } else if let Ok(word) =
-                unsafe { bpf_probe_read_kernel((data + 4 * i) as *const u8) }
-            {
-                s += word as u64;
-            }
-            if let Ok(word) = unsafe {
-                bpf_probe_read_kernel((data + 4 * i + 2) as *const u8)
-            } {
-                s += word as u64;
-            }
-            break;
-        }
-        // READ 4 Bytes at a time.
-        if let Ok(word) =
-            unsafe { bpf_probe_read_kernel((data + 4 * i) as *const u32) }
-        {
-            s += word as u64;
-        }
-    }
-    s
-}
+//
+// // Max header length
+// const MAX_CSUM_WORDS: usize = 20;
+// #[inline(always)]
+// pub fn l4_csum_helper(ctx: &XdpContext) -> u64 {
+//     let mut s: u64 = 0;
+//     let offset = PROTOCAL_OFFSET;
+//     // start at tcp header
+//     let data = ctx.data() + offset;
+//     // end at last tcp options
+//     let data_end = ctx.data_end();
+//     // let data_end = data + 60;
+//     for i in 0..MAX_CSUM_WORDS {
+//         if data + 4 * i + 4 > data_end {
+//             if let Ok(word) =
+//                 unsafe { bpf_probe_read_kernel((data + 4 * i) as *const u16) }
+//             {
+//                 s += word as u64;
+//             } else if let Ok(word) =
+//                 unsafe { bpf_probe_read_kernel((data + 4 * i) as *const u8) }
+//             {
+//                 s += word as u64;
+//             }
+//             if let Ok(word) = unsafe {
+//                 bpf_probe_read_kernel((data + 4 * i + 2) as *const u8)
+//             } {
+//                 s += word as u64;
+//             }
+//             break;
+//         }
+//         // READ 4 Bytes at a time.
+//         if let Ok(word) =
+//             unsafe { bpf_probe_read_kernel((data + 4 * i) as *const u32) }
+//         {
+//             s += word as u64;
+//         }
+//     }
+//     s
+// }
 
 #[inline(always)]
 pub unsafe fn process_tcp_state_transition(
