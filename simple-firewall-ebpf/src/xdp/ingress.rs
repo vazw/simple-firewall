@@ -336,9 +336,9 @@ pub fn handle_tcp_xdp(
             (*ipv).check = csum_fold_helper(full_sum);
 
             if (*header_mut).ack() == 0 {
-                let tcp_flag = header._bitfield_1.get(8, 8);
+                let tcp_flag = header._bitfield_1.get(7, 8);
                 (*header_mut).set_ack(1);
-                let new_flag = (*header_mut)._bitfield_1.get(8, 8);
+                let new_flag = (*header_mut)._bitfield_1.get(7, 8);
                 if let Some(check) = csum_diff(
                     &tcp_flag,
                     &new_flag,
