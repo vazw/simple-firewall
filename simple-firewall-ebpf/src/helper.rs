@@ -1,5 +1,5 @@
 use aya_ebpf::bindings::TC_ACT_PIPE;
-use aya_ebpf::helpers::{bpf_csum_diff, bpf_probe_read_kernel};
+use aya_ebpf::helpers::bpf_csum_diff;
 use aya_ebpf::programs::TcContext;
 use aya_ebpf::{
     bindings::xdp_action, helpers::bpf_ktime_get_ns, programs::XdpContext,
@@ -139,23 +139,30 @@ pub fn csum_fold_helper(mut csum: u64) -> u16 {
 //     s
 // }
 
+// urg ack psh rst syn fin
+// U   A   P   R   S   F
+// 32  16  8   4   2   1
+// …with this combination we can get what we care:
+// 1 = fin
+// 2 = syn
+// 4 = rst
+// 16 = ack
+// 17 fin ack
+// 18 = syn ack
+//
 #[inline(always)]
 pub unsafe fn process_tcp_state_transition(
-    hdr: &TcpHdr,
+    is_ingress: bool,
     connection_state: &mut ConnectionState,
+    tcp_flag: u8,
 ) -> bool {
-    let syn = hdr.syn() != 0;
-    let ack = hdr.ack() != 0;
-    let fin = hdr.fin() != 0;
-    let rst = hdr.rst() != 0;
-    // let psh = hdr.psh() != 0;
-
-    if rst && !connection_state.tcp_state.eq(&TCPState::Listen) {
+    // close on reset
+    if 4u8.eq(&tcp_flag) && !connection_state.tcp_state.eq(&TCPState::Listen) {
         connection_state.tcp_state = TCPState::Closed;
         return true;
     }
     // Check for SYN-ACK flood
-    if syn | (syn && ack) {
+    if 2u8.eq(&tcp_flag) | 18u8.eq(&tcp_flag) {
         let current_time = unsafe { bpf_ktime_get_ns() };
         // 1 second in nanoseconds
         if current_time - connection_state.last_syn_ack_time > 1_000_000_000 {
@@ -173,73 +180,90 @@ pub unsafe fn process_tcp_state_transition(
 
     match connection_state.tcp_state {
         TCPState::Closed => {
-            if syn && !ack {
+            if 2u8.eq(&tcp_flag) {
                 connection_state.tcp_state = TCPState::SynSent;
                 return true;
             }
         }
         TCPState::Listen => {
-            if syn && !ack {
+            if 2u8.eq(&tcp_flag) {
                 connection_state.tcp_state = TCPState::SynReceived;
                 return true;
             }
         }
         TCPState::SynReceived => {
-            if ack && !syn {
-                connection_state.tcp_state = TCPState::Established;
-                return true;
+            if is_ingress {
+                if 16u8.eq(&tcp_flag) {
+                    connection_state.tcp_state = TCPState::Established;
+                    return true;
+                } else if 4u8.eq(&tcp_flag) {
+                    connection_state.tcp_state = TCPState::Listen;
+                    return true;
+                }
             }
         }
         TCPState::SynSent => {
-            if syn && ack {
+            if 18u8.eq(&tcp_flag) && is_ingress {
                 connection_state.tcp_state = TCPState::Established;
                 return true;
             }
         }
         TCPState::Established => {
-            if fin && !ack {
-                connection_state.tcp_state = TCPState::FinWait1;
-                return true;
-            } else if syn && ack {
-                // THIS IS CUSTOM HANDLER INDICATED THAT THIS SOMETHIONG IS WORNG
-                // AND FIREWALL SHOULD PROCESS THIS CONNECTION AGAIN WITH RESET
-                connection_state.tcp_state = TCPState::Listen;
+            if is_ingress {
+                if 1u8.eq(&tcp_flag) {
+                    connection_state.tcp_state = TCPState::FinWait1;
+                    return true;
+                } else if 18u8.eq(&tcp_flag) {
+                    // THIS IS CUSTOM HANDLER INDICATED THAT THIS SOMETHIONG IS WORNG
+                    // AND FIREWALL SHOULD PROCESS THIS CONNECTION AGAIN WITH RESET
+                    connection_state.tcp_state = TCPState::Closed;
+                    return false;
+                }
+            } else if 16u8.eq(&tcp_flag)
+                && 1u8.eq(&connection_state.last_tcp_flag)
+            {
+                connection_state.tcp_state = TCPState::CloseWait;
                 return true;
             }
         }
         TCPState::FinWait1 => {
-            if fin && ack {
+            if 16u8.eq(&tcp_flag) && 17u8.eq(&connection_state.last_tcp_flag) {
                 connection_state.tcp_state = TCPState::TimeWait;
                 return true;
             }
-            if fin {
+            if 16u8.eq(&tcp_flag) && 1u8.eq(&connection_state.last_tcp_flag) {
                 connection_state.tcp_state = TCPState::Closing;
                 return true;
             }
-            if ack {
+            if 16u8.eq(&tcp_flag) {
                 connection_state.tcp_state = TCPState::FinWait2;
                 return true;
             }
         }
         TCPState::FinWait2 => {
-            if ack {
+            if 16u8.eq(&tcp_flag) && 1u8.eq(&connection_state.last_tcp_flag) {
                 connection_state.tcp_state = TCPState::TimeWait;
                 return true;
             }
         }
         TCPState::Closing => {
-            if ack {
+            if 16u8.eq(&tcp_flag) {
                 connection_state.tcp_state = TCPState::TimeWait;
                 return true;
             }
         }
-        TCPState::TimeWait => {
-            if ack {
+        TCPState::TimeWait | TCPState::LastAck => {
+            if 16u8.eq(&tcp_flag) {
                 connection_state.tcp_state = TCPState::Closed;
                 return true;
             }
         }
-        _ => {}
+        TCPState::CloseWait => {
+            if !is_ingress && 1u8.eq(&tcp_flag) {
+                connection_state.tcp_state = TCPState::LastAck;
+                return true;
+            }
+        }
     }
     false
 }
