@@ -1,9 +1,11 @@
 use aya_ebpf::{
-    bindings::xdp_action, helpers::bpf_csum_diff, programs::XdpContext,
+    bindings::xdp_action,
+    helpers::{bpf_csum_diff, bpf_tcp_check_syncookie, bpf_tcp_gen_syncookie},
+    programs::XdpContext,
 };
 use aya_log_ebpf::info;
 
-use core::{mem, net::Ipv4Addr, ptr};
+use core::{mem, net::Ipv4Addr};
 use network_types::{
     eth::EthHdr,
     icmp::IcmpHdr,
@@ -24,6 +26,7 @@ pub fn handle_tcp_xdp(
     let ipv: *mut Ipv4Hdr = unsafe { ptr_at_mut(&ctx, EthHdr::LEN)? };
     let header: &TcpHdr = unsafe { ptr_at(&ctx, PROTOCAL_OFFSET)? };
     let tcp_flag: u8 = header._bitfield_1.get(8, 6u8) as u8;
+    let ip_len = (header.doff() as u32) << 2;
 
     let remote_port = u16::from_be(header.source);
     // someone reaching to internal host_port
@@ -251,19 +254,27 @@ pub fn handle_tcp_xdp(
                 (*header_mut).ack_seq =
                     (u32::from_be((*header_mut).seq) + 1).to_be();
             }
+            let cookie = bpf_tcp_gen_syncookie(
+                ctx.data() as *mut _,
+                ipv as *mut _,
+                size_of::<Ipv4Hdr>() as u32,
+                header_mut as *mut _,
+                ip_len,
+            );
             if let Some(check) =
                 csum_diff(&header.seq, &0, !((*header_mut).check as u32))
             {
                 (*header_mut).check = csum_fold(check);
                 (*header_mut).seq = 0;
             }
+            info!(
+                &ctx,
+                "XDP::TX TCP to {:i}:{} cookies {}",
+                remote_addr.to_bits(),
+                remote_port,
+                cookie
+            );
         }
-        info!(
-            &ctx,
-            "XDP::TX TCP to {:i}:{}",
-            remote_addr.to_bits(),
-            remote_port,
-        );
         Ok(xdp_action::XDP_TX)
     } else {
         aya_log_ebpf::info!(
