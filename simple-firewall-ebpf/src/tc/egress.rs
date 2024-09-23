@@ -7,7 +7,7 @@ use core::net::Ipv4Addr;
 use network_types::{icmp::IcmpHdr, ip::IpProto, tcp::TcpHdr, udp::UdpHdr};
 use simple_firewall_common::{Connection, TCPState};
 
-use crate::{helper::*, CONNECTIONS, NEW, TEMPORT, UNKNOWN};
+use crate::{helper::*, CONNECTIONS, TEMPORT};
 
 pub fn handle_udp_egress(
     ctx: TcContext,
@@ -28,8 +28,6 @@ pub fn handle_udp_egress(
         remote_addr.to_bits(),
         remote_port,
         protocal as u8,
-        0,
-        0,
         0,
     );
     let sum_key = connection.into_session();
@@ -99,8 +97,6 @@ pub fn handle_tcp_egress(
         remote_port,
         protocal as u8,
         tcp_flag,
-        u32::from_be(tcp_hdr.seq),
-        u32::from_be(tcp_hdr.ack_seq),
     );
     let sums_key = connection.into_session();
     if let Ok(connection_state) = is_requested(&sums_key) {
@@ -130,19 +126,6 @@ pub fn handle_tcp_egress(
             remote_port,
         );
         Ok(TC_ACT_PIPE)
-    } else if unsafe { UNKNOWN.get(&sums_key).is_some() } && 18u8.eq(&tcp_flag)
-    {
-        aya_log_ebpf::info!(
-            &ctx,
-            "Recieved syn ack from server on TCP with {:i}:{}",
-            remote_addr.to_bits(),
-            remote_port,
-        );
-        unsafe { NEW.output(&ctx, &connection, 0) };
-        if unsafe { UNKNOWN.remove(&connection.remote_addr).is_ok() } {
-            aya_log_ebpf::info!(&ctx, "removed from unkown",);
-        }
-        Ok(TC_ACT_SHOT)
     } else if (tcp_dport_out(remote_port) || tcp_sport_out(host_port))
         // filter syn for connect or push ack for rst only
         && (2u8.eq(&tcp_flag) || 24u8.eq(&tcp_flag))

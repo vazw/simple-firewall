@@ -57,8 +57,6 @@ pub fn handle_tcp_xdp(
         remote_port,
         protocal as u8,
         tcp_flag,
-        u32::from_be(header.seq),
-        u32::from_be(header.ack_seq),
     );
     let sums_key = connection.into_session();
     let header_mut: *mut TcpHdr = unsafe { ptr_at_mut(&ctx, PROTOCAL_OFFSET)? };
@@ -70,7 +68,7 @@ pub fn handle_tcp_xdp(
             .gt(&1_000_000_000)
         {
             unsafe {
-                NEW.output(&ctx, &connection.into_flag_zero(), 0);
+                NEW.output(&ctx, &connection, 0);
                 (*connection_state).last_syn_ack_time = current_time;
             }
         }
@@ -126,7 +124,7 @@ pub fn handle_tcp_xdp(
             // new connections will be handle here with tcp syn cookies
             unsafe { UNKNOWN.get(&connection.remote_addr) }
     {
-        if u32::from_be(header.ack_seq) - 1 == (*cookie) {
+        let r = if u32::from_be(header.ack_seq) - 1 == (*cookie) {
             info!(
                 &ctx,
                 "Correct cookies on TCP from {:i}:{} creating connection",
@@ -134,14 +132,15 @@ pub fn handle_tcp_xdp(
                 remote_port,
             );
             unsafe { NEW.output(&ctx, &connection, 0) };
-            // unsafe {
-            // if CONNECTIONS
-            //     .insert(&sums_key, &connection.into_state_listen(), 0)
-            //     .is_ok()
-            // {
-            //     info!(&ctx, "Added new con");
-            // }
-            // }
+            unsafe {
+                if CONNECTIONS
+                    .insert(&sums_key, &connection.into_state_listen(), 0)
+                    .is_ok()
+                {
+                    info!(&ctx, "Added new con");
+                }
+            }
+            Ok(xdp_action::XDP_PASS)
         } else {
             info!(
                 &ctx,
@@ -149,8 +148,12 @@ pub fn handle_tcp_xdp(
                 remote_addr.to_bits(),
                 remote_port,
             );
+            Ok(xdp_action::XDP_DROP)
         };
-        Ok(xdp_action::XDP_DROP)
+        if unsafe { UNKNOWN.remove(&connection.remote_addr).is_ok() } {
+            aya_log_ebpf::info!(&ctx, "removed from unkown",);
+        }
+        r
     } else if (tcp_dport_in(host_port) || tcp_sport_in(remote_port))
         && 2u8.eq(&tcp_flag)
     {
@@ -260,8 +263,6 @@ pub fn handle_udp_xdp(
         remote_addr.to_bits(),
         remote_port,
         protocal as u8,
-        0,
-        0,
         0,
     );
     let sum_key = connection.into_session();

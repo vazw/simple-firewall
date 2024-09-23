@@ -32,8 +32,6 @@ use log4rs::encode::pattern::PatternEncoder;
 use log4rs::config::{Appender, Root};
 use log4rs::Config;
 
-use pnet::packet::ip::IpNextHeaderProtocols;
-use pnet::transport::transport_channel;
 use simple_firewall_common::{Connection, ConnectionState};
 use tokio::signal;
 use tokio::time::{interval, Duration};
@@ -74,11 +72,6 @@ async fn main() -> Result<(), anyhow::Error> {
         .unwrap();
 
     log4rs::init_config(config)?;
-
-    // Create transport channel for sending TCP packet after finished syn cookie check
-    let protocol = pnet::transport::TransportChannelType::Layer3(
-        IpNextHeaderProtocols::Tcp,
-    );
 
     // Bump the memlock rlimit. This is needed for older kernels that don't use the
     // new memcg based accounting, see https://lwn.net/Articles/837122/
@@ -170,7 +163,7 @@ async fn main() -> Result<(), anyhow::Error> {
         tokio::task::spawn(async move {
             // let mut u_connection: std::collections::HashMap<u32, Instant> =
             //     std::collections::HashMap::new();
-            let mut buf = vec![BytesMut::with_capacity(24); 2000];
+            let mut buf = vec![BytesMut::with_capacity(16); 2000];
             loop {
                 let events = perf_buf
                     .read_events(&mut buf)
@@ -192,64 +185,22 @@ async fn main() -> Result<(), anyhow::Error> {
         let mut rx = rx.clone();
         let mut interval_1 = interval(Duration::from_millis(25));
         let mut interval_2 = interval(Duration::from_millis(25));
-        let (mut px, _) = match transport_channel(4096, protocol) {
-            std::io::Result::Ok((tx, rx)) => (tx, rx),
-            Err(_) => {
-                panic!("Permission denied: cannot create transport_channel")
-            }
-        };
         let mut connection_timer: std::collections::HashMap<u32, Instant> =
             std::collections::HashMap::with_capacity(262_144);
         let mut connections: HashMap<_, u32, ConnectionState> =
             HashMap::try_from(bpf.take_map("CONNECTIONS").unwrap())?;
-        let mut ack_buf = IP4_ACKBUF;
-        let mut syn_buf = IP4_SYNBUF;
 
         loop {
             tokio::select! {
                 _ = interval_1.tick() => {
-                while let std::result::Result::Ok(conn) = new_rev.try_recv() {
-                    debug!("seq: {} ack_seq: {}", conn.seq, conn.ack_seq);
-                    let packet = if conn.tcp_flag.eq(&16) {
-                        create_tcp_syn_packet(
-                            conn.remote_addr.into(),
-                            conn.host_addr.into(),
-                            conn.remote_port,
-                            conn.host_port,
-                            conn.seq - 1,
-                            &mut syn_buf
-                        )
-                    } else if conn.tcp_flag.eq(&18) {
-                        if connections.insert(conn.into_session(), conn.into_state_listen(), 0).is_ok() {
-                            info!("Added New Known Connection");
+                    while let std::result::Result::Ok(conn) = new_rev.try_recv() {
+                        if let Some(timer) = connection_timer.get_mut(&conn.into_session()) {
+                            *timer = Instant::now();
+                        }else {
                             connection_timer.insert(conn.into_session(), Instant::now());
                         }
-                        create_tcp_ack_packet(
-                            conn.remote_addr.into(),
-                            conn.host_addr.into(),
-                            conn.remote_port,
-                            conn.host_port,
-                            conn.ack_seq,
-                            conn.seq + 1,
-                            &mut ack_buf
-                        )
-
-                    } else {
-                        connection_timer.insert(conn.into_session(), Instant::now());
-                        continue
-                    };
-                    match px.send_to(packet, std::net::IpAddr::V4(conn.remote_addr.into())) {
-                        std::io::Result::Ok(n) => {
-                            info!("Proxy: Sent {n:?} bytes");
-                        }
-                        Err(_) => {
-                            info!("The packet wasnt sent. An error was detected");
-                        }
                     }
-
                 }
-                }
-
 
                 _ = rx.changed() => {
                     if *rx.borrow() {
