@@ -9,6 +9,8 @@ pub struct Connection {
     pub protocal: u8,
     pub tcp_flag: u8,
     _padding: [u8; 2],
+    pub seq: u32,
+    pub ack_seq: u32,
 }
 
 #[cfg(feature = "user")]
@@ -57,6 +59,8 @@ impl Connection {
         remote_port: u16,
         protocal: u8,
         tcp_flag: u8,
+        seq: u32,
+        ack_seq: u32,
     ) -> Self {
         Connection {
             host_addr,
@@ -66,6 +70,8 @@ impl Connection {
             protocal,
             tcp_flag,
             _padding: [0u8; 2],
+            seq,
+            ack_seq,
         }
     }
 
@@ -80,6 +86,8 @@ impl Connection {
         remote_port: u16,
         protocal: u8,
         tcp_flag: u8,
+        seq: u32,
+        ack_seq: u32,
     ) -> Self {
         Connection {
             host_addr,
@@ -89,6 +97,8 @@ impl Connection {
             protocal,
             tcp_flag,
             _padding: [0u8; 2],
+            seq,
+            ack_seq,
         }
     }
 
@@ -130,6 +140,18 @@ impl Connection {
             remote_port: self.remote_port,
             protocal: self.protocal,
             tcp_state: TCPState::SynReceived,
+            last_tcp_flag: self.tcp_flag,
+        }
+    }
+    #[inline(always)]
+    pub fn into_state_established(&self) -> ConnectionState {
+        ConnectionState {
+            last_syn_ack_time: 0,
+            syn_ack_count: 0,
+            remote_ip: self.remote_addr,
+            remote_port: self.remote_port,
+            protocal: self.protocal,
+            tcp_state: TCPState::Established,
             last_tcp_flag: self.tcp_flag,
         }
     }

@@ -1,9 +1,13 @@
 #![allow(unreachable_code)]
 pub mod helper;
+
+use std::net::Ipv4Addr;
+use std::time::Instant;
+
 use helper::*;
 
 use anyhow::Ok;
-use aya::maps::AsyncPerfEventArray;
+use aya::maps::{AsyncPerfEventArray, HashMap};
 use aya::programs::{tc, SchedClassifier, TcAttachType, Xdp, XdpFlags};
 use aya::util::online_cpus;
 use aya::{include_bytes_aligned, Bpf};
@@ -28,8 +32,9 @@ use log4rs::encode::pattern::PatternEncoder;
 use log4rs::config::{Appender, Root};
 use log4rs::Config;
 
-use simple_firewall_common::Connection;
-// use tokio::io::unix::AsyncFd;
+use pnet::packet::ip::IpNextHeaderProtocols;
+use pnet::transport::transport_channel;
+use simple_firewall_common::{Connection, ConnectionState};
 use tokio::signal;
 use tokio::time::{interval, Duration};
 
@@ -69,7 +74,11 @@ async fn main() -> Result<(), anyhow::Error> {
         .unwrap();
 
     log4rs::init_config(config)?;
-    // env_logger::init();
+
+    // Create transport channel for sending TCP packet after finished syn cookie check
+    let protocol = pnet::transport::TransportChannelType::Layer3(
+        IpNextHeaderProtocols::Tcp,
+    );
 
     // Bump the memlock rlimit. This is needed for older kernels that don't use the
     // new memcg based accounting, see https://lwn.net/Articles/837122/
@@ -181,18 +190,60 @@ async fn main() -> Result<(), anyhow::Error> {
     let (tx, rx) = tokio::sync::watch::channel(false);
     let t = tokio::spawn(async move {
         let mut rx = rx.clone();
-        let mut interval_2 = interval(Duration::from_millis(10));
-        // let mut conn: std::collections::HashMap<u32, Instant> =
-        //     std::collections::HashMap::with_capacity(262_144);
-        // let mut connections: HashMap<_, u32, ConnectionState> =
-        //     HashMap::try_from(bpf.take_map("CONNECTIONS").unwrap())?;
+        let mut interval_2 = interval(Duration::from_millis(25));
+        let (mut px, _) = match transport_channel(4096, protocol) {
+            std::io::Result::Ok((tx, rx)) => (tx, rx),
+            Err(_) => {
+                panic!("Permission denied: cannot create transport_channel")
+            }
+        };
+        let mut connection_timer: std::collections::HashMap<u32, Instant> =
+            std::collections::HashMap::with_capacity(262_144);
+        let mut connections: HashMap<_, u32, ConnectionState> =
+            HashMap::try_from(bpf.take_map("CONNECTIONS").unwrap())?;
+        let mut ack_buf = IP4_ACKBUF;
+        let mut syn_buf = IP4_SYNBUF;
 
         loop {
             tokio::select! {
                 _ = new_rev.recv() => {
-                    if let Some(rb) = new_rev.recv().await {
-                        debug!("{:#?}", rb);
+                if let Some(conn) = new_rev.recv().await {
+                    debug!("{:#?}", conn);
+                    let packet = if conn.tcp_flag.eq(&16) {
+                        create_tcp_syn_packet(
+                            conn.remote_addr.into(),
+                            conn.host_addr.into(),
+                            conn.remote_port,
+                            conn.host_port,
+                            conn.seq-1,
+                            &mut syn_buf
+                        )
+                    } else if conn.tcp_flag.eq(&18) {
+                        if connections.insert(conn.into_session(), conn.into_state_established(), 0).is_ok() {
+                            info!("Added New Known Connection");
+                            connection_timer.insert(conn.into_session(), Instant::now());
+                        }
+                        create_tcp_ack_packet(
+                            conn.remote_addr.into(),
+                            conn.host_addr.into(),
+                            conn.remote_port,
+                            conn.host_port,
+                            conn.ack_seq,
+                            conn.seq+1,
+                            &mut ack_buf
+                        )
+
+                    } else {continue};
+                    match px.send_to(packet, std::net::IpAddr::V4(conn.remote_addr.into())) {
+                        std::io::Result::Ok(n) => {
+                            println!("Proxy: Sent {n:?} bytes");
+                        }
+                        Err(_) => {
+                            println!("The packet wasnt sent. An error was detected");
+                        }
                     }
+
+                }
                 }
 
 
@@ -227,6 +278,8 @@ async fn main() -> Result<(), anyhow::Error> {
                 //
                 //     }
                 // }
+
+                // Alternative watcher for bpf program map avoid value moved out
                 _ = interval_2.tick() => {
                     let new_config: AppConfig
                         = Figment::new().merge(Toml::file(&opt.config)).extract()?;
@@ -234,6 +287,16 @@ async fn main() -> Result<(), anyhow::Error> {
                         _ = load_config(&mut bpf, &new_config);
                         config_len = new_config.len();
                     };
+                    if !connection_timer.is_empty() {
+                        for (k,v) in connection_timer.clone().iter() {
+                            if v.elapsed().as_secs() > 90 {
+                                if connections.remove(k).is_ok() {
+                                    info!("Removed timeout on {}", Ipv4Addr::from_bits(*k).to_string());
+                                }
+                                connection_timer.remove(k);
+                            }
+                        }
+                    }
                 }
             }
         }
