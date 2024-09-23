@@ -2,6 +2,7 @@
 #![no_main]
 #![allow(incomplete_features)]
 #![feature(generic_const_exprs)]
+#![feature(let_chains)]
 
 mod helper;
 mod tc;
@@ -11,7 +12,7 @@ use helper::*;
 use aya_ebpf::{
     bindings::{xdp_action, TC_ACT_PIPE},
     macros::{classifier, map, xdp},
-    maps::HashMap,
+    maps::{HashMap, PerfEventArray},
     programs::{TcContext, XdpContext},
 };
 
@@ -19,7 +20,7 @@ use network_types::{
     eth::{EthHdr, EtherType},
     ip::{IpProto, Ipv4Hdr},
 };
-use simple_firewall_common::ConnectionState;
+use simple_firewall_common::{Connection, ConnectionState};
 
 use crate::tc::egress::{
     handle_icmp_egress, handle_tcp_egress, handle_udp_egress,
@@ -30,11 +31,13 @@ use crate::xdp::ingress::{handle_icmp_xdp, handle_tcp_xdp, handle_udp_xdp};
 #[map(name = "CONNECTIONS")]
 static mut CONNECTIONS: HashMap<u32, ConnectionState> =
     HashMap::with_max_entries(u16::MAX as u32 + 1, 0);
+
+//Store u32 cookies on UNKNOWN MAP
 #[map(name = "UNKNOWN")]
-static mut UNKNOWN: HashMap<u32, ConnectionState> =
-    HashMap::with_max_entries(256, 0);
-// #[map(name = "CONBUF")]
-// static CONBUF: RingBuf = RingBuf::with_byte_size(16_777_216, 0);
+static mut UNKNOWN: HashMap<u32, u32> = HashMap::with_max_entries(2_000, 0);
+#[map(name = "NEW")]
+static NEW: PerfEventArray<Connection> =
+    PerfEventArray::with_max_entries(2_000, 0);
 
 #[map(name = "TCP_IN_SPORT")]
 static mut TCP_IN_SPORT: HashMap<u16, u8> =

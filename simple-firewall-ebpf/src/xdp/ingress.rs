@@ -1,5 +1,7 @@
 use aya_ebpf::{
-    bindings::xdp_action, helpers::bpf_csum_diff, programs::XdpContext,
+    bindings::xdp_action,
+    helpers::{bpf_csum_diff, bpf_ktime_get_ns},
+    programs::XdpContext,
 };
 use aya_log_ebpf::info;
 
@@ -13,8 +15,27 @@ use network_types::{
 };
 use simple_firewall_common::{Connection, TCPState};
 
-use crate::{helper::*, CONNECTIONS, TEMPORT, UNKNOWN};
+use crate::{helper::*, CONNECTIONS, NEW, TEMPORT, UNKNOWN};
 
+// TCP Struct
+// +----------------------------+---------------------------+
+// |    Source Port (16 bits)   |Destination Port (16 bits) |
+// +----------------------------+---------------------------+
+// |                Sequence Number (32 bits)               |
+// +----------------------------+---------------------------+
+// |            Acknowledgment Number (32 bits)             |
+// +----------------------------+---------------------------+
+// | Doff |Reserved |U|A|P|R|S|F|   Window Size             |
+// |4bits |(6 bits) | (6 bits)  |         (16 bits)         |
+// +----------------------------+---------------------------+
+// |    Checksum (16 bits)      |  Urgent Pointer (16 bits) |
+// +----------------------------+---------------------------+
+// |        Options (if any Doff length)                    |
+// +----------------------------+---------------------------+
+// |                                                        |
+// |                        Data...                         |
+// |                                                        |
+// +--------------------------------------------------------+
 pub fn handle_tcp_xdp(
     ctx: XdpContext,
     host_addr: Ipv4Addr,
@@ -23,6 +44,7 @@ pub fn handle_tcp_xdp(
 ) -> Result<u32, u32> {
     let ipv: *mut Ipv4Hdr = unsafe { ptr_at_mut(&ctx, EthHdr::LEN)? };
     let header: &TcpHdr = unsafe { ptr_at(&ctx, PROTOCAL_OFFSET)? };
+    // get all flag at once by loading U|A|P|R|S|F in bits orders as u8
     let tcp_flag: u8 = header._bitfield_1.get(8, 6u8) as u8;
 
     let remote_port = u16::from_be(header.source);
@@ -36,17 +58,6 @@ pub fn handle_tcp_xdp(
         protocal as u8,
         tcp_flag,
     );
-    // unsafe {
-    //     match CONBUF.reserve::<[u8; 16]>(0) {
-    //         Some(mut event) => {
-    //             ptr::write_unaligned(event.as_mut_ptr() as *mut _, connection);
-    //             event.submit(0);
-    //         }
-    //         None => {
-    //             info!(&ctx, "Connot reserve ringbuffer");
-    //         }
-    //     }
-    // }
     let sums_key = connection.into_session();
     let header_mut: *mut TcpHdr = unsafe { ptr_at_mut(&ctx, PROTOCAL_OFFSET)? };
     if let Some(connection_state) =
@@ -99,12 +110,12 @@ pub fn handle_tcp_xdp(
             );
             Ok(xdp_action::XDP_PASS)
         }
-    } else if
-    // new connections will be handle here with tcp syn cookies
-    unsafe { UNKNOWN.get_ptr_mut(&connection.remote_addr).is_some() }
-        && 16u8.eq(&tcp_flag)
+    } else if 16u8.eq(&tcp_flag)
+        && let Some(cookie) =
+            // new connections will be handle here with tcp syn cookies
+            unsafe { UNKNOWN.get(&connection.remote_addr) }
     {
-        if u32::from_be(header.ack_seq) - 1 == sums_key {
+        let result = if u32::from_be(header.ack_seq) - 1 == (*cookie) {
             info!(
                 &ctx,
                 "Correct cookies on TCP from {:i}:{}",
@@ -116,11 +127,9 @@ pub fn handle_tcp_xdp(
                     .insert(&sums_key, &connection.into_state_listen(), 0)
                     .is_ok()
                 {
-                    info!(&ctx, "Added new con",);
+                    info!(&ctx, "Added new con");
                 }
-                if UNKNOWN.remove(&connection.remote_addr).is_ok() {
-                    info!(&ctx, "removed from unkown",);
-                }
+                NEW.output(&ctx, &connection, 0);
             }
             Ok(xdp_action::XDP_PASS)
         } else {
@@ -130,11 +139,12 @@ pub fn handle_tcp_xdp(
                 remote_addr.to_bits(),
                 remote_port,
             );
-            if unsafe { UNKNOWN.remove(&connection.remote_addr).is_ok() } {
-                info!(&ctx, "removed from unkown",);
-            }
             Ok(xdp_action::XDP_DROP)
+        };
+        if unsafe { UNKNOWN.remove(&connection.remote_addr).is_ok() } {
+            info!(&ctx, "removed from unkown",);
         }
+        result
     } else if (tcp_dport_in(host_port) || tcp_sport_in(remote_port))
         && 2u8.eq(&tcp_flag)
     {
@@ -146,13 +156,11 @@ pub fn handle_tcp_xdp(
             remote_addr.to_bits(),
             remote_port,
         );
+        let cookie = unsafe { bpf_ktime_get_ns() >> 32 } as u32;
         unsafe {
-            _ = UNKNOWN.insert(
-                &connection.remote_addr,
-                &connection.into_state_synreceived(),
-                0,
-            )
-        };
+            _ = UNKNOWN.insert(&connection.remote_addr, &cookie, 0);
+            NEW.output(&ctx, &connection, 0);
+        }
 
         let ethdr: *mut EthHdr = unsafe { ptr_at_mut(&ctx, 0)? };
         unsafe {
@@ -196,18 +204,18 @@ pub fn handle_tcp_xdp(
             }
             if let Some(check) = csum_diff(
                 &header.seq,
-                &sums_key.to_be(),
+                &cookie.to_be(),
                 !((*header_mut).check as u32),
             ) {
                 (*header_mut).check = csum_fold(check);
-                (*header_mut).seq = sums_key.to_be();
+                (*header_mut).seq = cookie.to_be();
             }
             info!(
                 &ctx,
                 "XDP::TX TCP to {:i}:{} cookies {}",
                 remote_addr.to_bits(),
                 remote_port,
-                sums_key
+                cookie
             );
         }
         Ok(xdp_action::XDP_TX)

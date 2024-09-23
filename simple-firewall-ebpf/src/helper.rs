@@ -5,7 +5,7 @@ use aya_ebpf::{
     bindings::xdp_action, helpers::bpf_ktime_get_ns, programs::XdpContext,
 };
 use const_assert::{Assert, IsTrue};
-use network_types::{eth::EthHdr, ip::Ipv4Hdr, tcp::TcpHdr};
+use network_types::{eth::EthHdr, ip::Ipv4Hdr};
 
 use core::mem;
 use simple_firewall_common::{ConnectionState, TCPState};
@@ -20,7 +20,7 @@ pub const ICMP_ECHO_REPLY: u8 = 0;
 pub const ICMP_DEST_UNREACH: u8 = 3;
 pub const ICMP_ECHO_REQUEST: u8 = 8;
 pub const ICMP_TIME_EXCEEDED: u8 = 11;
-// use simple_firewall_common::{Connection, ConnectionState, TCPState};
+
 #[inline(always)]
 pub unsafe fn ptr_at<T>(ctx: &XdpContext, offset: usize) -> Result<&T, u32> {
     let start = ctx.data();
@@ -268,35 +268,35 @@ pub unsafe fn process_tcp_state_transition(
     false
 }
 
-#[inline(always)]
-pub unsafe fn agressive_tcp_rst(
-    hdr: &TcpHdr,
-    connection_state: &mut ConnectionState,
-) -> TCPState {
-    let syn = hdr.syn() != 0;
-    let ack = hdr.ack() != 0;
-    let rst = hdr.rst() != 0;
-
-    match connection_state.tcp_state {
-        TCPState::Listen => {
-            if syn && !ack {
-                connection_state.tcp_state = TCPState::SynReceived;
-                TCPState::SynReceived
-            } else {
-                TCPState::Closed
-            }
-        }
-        TCPState::SynReceived => {
-            if (ack && !syn) || rst {
-                connection_state.tcp_state = TCPState::Established;
-                TCPState::Established
-            } else {
-                TCPState::SynReceived
-            }
-        }
-        _ => TCPState::Closed,
-    }
-}
+// #[inline(always)]
+// pub unsafe fn agressive_tcp_rst(
+//     hdr: &TcpHdr,
+//     connection_state: &mut ConnectionState,
+// ) -> TCPState {
+//     let syn = hdr.syn() != 0;
+//     let ack = hdr.ack() != 0;
+//     let rst = hdr.rst() != 0;
+//
+//     match connection_state.tcp_state {
+//         TCPState::Listen => {
+//             if syn && !ack {
+//                 connection_state.tcp_state = TCPState::SynReceived;
+//                 TCPState::SynReceived
+//             } else {
+//                 TCPState::Closed
+//             }
+//         }
+//         TCPState::SynReceived => {
+//             if (ack && !syn) || rst {
+//                 connection_state.tcp_state = TCPState::Established;
+//                 TCPState::Established
+//             } else {
+//                 TCPState::SynReceived
+//             }
+//         }
+//         _ => TCPState::Closed,
+//     }
+// }
 
 // Session using remoteIP
 #[inline(always)]
