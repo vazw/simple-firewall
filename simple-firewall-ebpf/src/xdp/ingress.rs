@@ -47,7 +47,7 @@ pub fn handle_tcp_xdp(
     protocal: IpProto,
 ) -> Result<u32, u32> {
     let ipv: *mut Ipv4Hdr = unsafe { ptr_at_mut(&ctx, EthHdr::LEN)? };
-    let total_length = u32::from_be(unsafe { (*ipv).tot_len as u32 });
+    let total_length = u16::from_be(unsafe { (*ipv).tot_len }) as u32;
     let header: &TcpHdr = unsafe { ptr_at(&ctx, PROTOCAL_OFFSET)? };
     // get all flag at once by loading U|A|P|R|S|F in bits orders as u8
     let tcp_flag: u8 = header._bitfield_1.get(8, 6u8) as u8;
@@ -125,6 +125,7 @@ pub fn handle_tcp_xdp(
             Ok(xdp_action::XDP_PASS)
         }
     } else if 16u8.eq(&tcp_flag) {
+        info!(&ctx, "cookie {}", header.ack_seq.to_be(),);
         let check = unsafe {
             bpf_tcp_raw_check_syncookie_ipv4(
                 ipv as *mut _,
@@ -151,9 +152,10 @@ pub fn handle_tcp_xdp(
         } else {
             info!(
                 &ctx,
-                "Incorect cookies on TCP from {:i}:{} DROP",
+                "Incorect cookies on TCP from {:i}:{} DROP got {}",
                 remote_addr.to_bits(),
                 remote_port,
+                check
             );
             Ok(xdp_action::XDP_DROP)
         }
