@@ -103,6 +103,13 @@ impl Connection {
     }
 
     #[inline(always)]
+    pub fn into_flag_zero(&self) -> Self {
+        let mut f = *self;
+        f.tcp_flag = 0;
+        f
+    }
+
+    #[inline(always)]
     pub fn into_session(&self) -> u32 {
         // USE REMOTE HOST AS SessionKey
         self.remote_addr

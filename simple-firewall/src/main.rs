@@ -234,7 +234,10 @@ async fn main() -> Result<(), anyhow::Error> {
                             &mut ack_buf
                         )
 
-                    } else {continue};
+                    } else {
+                        connection_timer.insert(conn.into_session(), Instant::now());
+                        continue
+                    };
                     match px.send_to(packet, std::net::IpAddr::V4(conn.remote_addr.into())) {
                         std::io::Result::Ok(n) => {
                             info!("Proxy: Sent {n:?} bytes");
@@ -253,32 +256,6 @@ async fn main() -> Result<(), anyhow::Error> {
                         break;
                     }
                 }
-                // _ = interval_1.tick() => {
-                //     let con = del_rev.try_recv();
-                //     if con.is_ok() {
-                //         let data = con.unwrap();
-                //         let cons_ = connections.get(&data, 0);
-                //         if cons_.is_ok(){
-                //             let cons_ = cons_.unwrap();
-                //             // Check if connections still exits
-                //             let src_ip = Ipv4Addr::from(cons_.remote_ip);
-                //             let port = cons_.remote_port;
-                //             let protocal = if cons_.protocal == 6 {"TCP"} else {"UDP"};
-                //             if connections.remove(&data).is_ok() {
-                //                 info!("Closing {} on {}:{}", protocal, src_ip.to_string(), &port);
-                //             } else {
-                //             // The connections maybe removed by `rst` signal
-                //                 info!(
-                //                     "Closed {}:{} on {}",
-                //                     src_ip.to_string(),
-                //                     port,
-                //                     protocal
-                //                 );
-                //             }
-                //         }
-                //
-                //     }
-                // }
 
                 // Alternative watcher for bpf program map avoid value moved out
                 _ = interval_2.tick() => {
