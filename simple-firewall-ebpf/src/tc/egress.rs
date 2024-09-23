@@ -18,7 +18,7 @@ pub fn handle_udp_egress(
     let udp_hdr: &UdpHdr = unsafe { tc_ptr_at(&ctx, PROTOCAL_OFFSET)? };
     let host_port = u16::from_be(udp_hdr.source);
     let remote_port = u16::from_be(udp_hdr.dest);
-    if remote_addr.is_broadcast() {
+    if remote_addr.is_broadcast() || remote_port.eq(&123) {
         _ = unsafe { TEMPORT.insert(&remote_port, &1, 0) };
         return Ok(TC_ACT_PIPE);
     }
