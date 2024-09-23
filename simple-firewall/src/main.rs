@@ -209,7 +209,7 @@ async fn main() -> Result<(), anyhow::Error> {
             tokio::select! {
                 _ = interval_1.tick() => {
                 while let std::result::Result::Ok(conn) = new_rev.try_recv() {
-                    debug!("{:#?}", conn);
+                    debug!("seq: {} ack_seq: {}", conn.seq.to_le(), conn.ack_seq.to_le());
                     let packet = if conn.tcp_flag.eq(&16) {
                         create_tcp_syn_packet(
                             conn.remote_addr.into(),
