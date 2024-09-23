@@ -36,7 +36,7 @@ static mut CONNECTIONS: HashMap<u32, ConnectionState> =
 #[map(name = "UNKNOWN")]
 static mut UNKNOWN: HashMap<u32, u32> = HashMap::with_max_entries(2_000, 0);
 #[map(name = "NEW")]
-static NEW: PerfEventArray<Connection> =
+static mut NEW: PerfEventArray<Connection> =
     PerfEventArray::with_max_entries(2_000, 0);
 
 #[map(name = "TCP_IN_SPORT")]

@@ -138,7 +138,7 @@ pub fn handle_tcp_egress(
             remote_addr.to_bits(),
             remote_port,
         );
-        NEW.output(&ctx, &connection, 0);
+        unsafe { NEW.output(&ctx, &connection, 0) };
         if unsafe { UNKNOWN.remove(&connection.remote_addr).is_ok() } {
             aya_log_ebpf::info!(&ctx, "removed from unkown",);
         }

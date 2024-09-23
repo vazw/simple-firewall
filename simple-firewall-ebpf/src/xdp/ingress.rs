@@ -124,7 +124,7 @@ pub fn handle_tcp_xdp(
                 remote_addr.to_bits(),
                 remote_port,
             );
-            NEW.output(&ctx, &connection, 0);
+            unsafe { NEW.output(&ctx, &connection, 0) };
             // unsafe {
             // if CONNECTIONS
             //     .insert(&sums_key, &connection.into_state_listen(), 0)
