@@ -125,12 +125,12 @@ pub fn handle_tcp_xdp(
             Ok(xdp_action::XDP_PASS)
         }
     } else if 16u8.eq(&tcp_flag) {
-        let cookie = header.ack_seq.to_be() as i64;
+        let cookie = header.ack_seq.to_be();
         let check = unsafe {
             bpf_tcp_raw_check_syncookie_ipv4(
                 ipv as *mut _,
                 header_mut as *mut _,
-            )
+            ) as u32
         };
         info!(&ctx, "cookies {} check {}", cookie, check,);
         if 0 < (check - cookie) && (check - cookie) < 10 {
