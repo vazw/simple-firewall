@@ -132,6 +132,7 @@ pub fn handle_tcp_xdp(
                 header_mut as *mut _,
             )
         };
+        info!(&ctx, "cookies {} check {}", cookie, check,);
         if 0 < (check - cookie) && (check - cookie) < 10 {
             info!(
                 &ctx,
