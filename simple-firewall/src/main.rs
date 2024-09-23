@@ -216,7 +216,7 @@ async fn main() -> Result<(), anyhow::Error> {
                             conn.host_addr.into(),
                             conn.remote_port,
                             conn.host_port,
-                            conn.seq +1,
+                            conn.seq - 1,
                             &mut syn_buf
                         )
                     } else if conn.tcp_flag.eq(&18) {
