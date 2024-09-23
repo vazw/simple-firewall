@@ -65,7 +65,15 @@ pub fn handle_tcp_xdp(
     if let Some(connection_state) =
         unsafe { CONNECTIONS.get_ptr_mut(&sums_key) }
     {
-        unsafe { NEW.output(&ctx, &connection.into_flag_zero(), 0) };
+        let current_time = unsafe { bpf_ktime_get_ns() };
+        if (current_time - unsafe { (*connection_state).last_syn_ack_time })
+            .gt(&1_000_000_000)
+        {
+            unsafe {
+                NEW.output(&ctx, &connection.into_flag_zero(), 0);
+                (*connection_state).last_syn_ack_time = current_time;
+            }
+        }
         let transitioned = unsafe {
             process_tcp_state_transition(
                 true,
