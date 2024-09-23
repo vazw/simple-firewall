@@ -47,7 +47,7 @@ pub fn handle_tcp_xdp(
     protocal: IpProto,
 ) -> Result<u32, u32> {
     let ipv: *mut Ipv4Hdr = unsafe { ptr_at_mut(&ctx, EthHdr::LEN)? };
-    let total_length = unsafe { (*ipv).tot_len };
+    let total_length = u32::from_be(unsafe { (*ipv).tot_len as u32 });
     let header: &TcpHdr = unsafe { ptr_at(&ctx, PROTOCAL_OFFSET)? };
     // get all flag at once by loading U|A|P|R|S|F in bits orders as u8
     let tcp_flag: u8 = header._bitfield_1.get(8, 6u8) as u8;
@@ -216,11 +216,13 @@ pub fn handle_tcp_xdp(
                 (*header_mut).ack_seq =
                     (u32::from_be((*header_mut).seq) + 1).to_be();
             }
-            if let Some(check) =
-                csum_diff(&header.seq, &cookie, !((*header_mut).check as u32))
-            {
+            if let Some(check) = csum_diff(
+                &header.seq,
+                &cookie.to_be(),
+                !((*header_mut).check as u32),
+            ) {
                 (*header_mut).check = csum_fold(check);
-                (*header_mut).seq = cookie;
+                (*header_mut).seq = cookie.to_be();
             }
             info!(
                 &ctx,
