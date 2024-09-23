@@ -143,7 +143,10 @@ pub fn handle_tcp_egress(
             aya_log_ebpf::info!(&ctx, "removed from unkown",);
         }
         Ok(TC_ACT_SHOT)
-    } else if tcp_dport_out(remote_port) || tcp_sport_out(host_port) {
+    } else if (tcp_dport_out(remote_port) || tcp_sport_out(host_port))
+        // filter syn for connect or push ack for rst only
+        && (2u8.eq(&tcp_flag) || 24u8.eq(&tcp_flag))
+    {
         add_request(&sums_key, &connection.into_state_sent());
         aya_log_ebpf::info!(
             &ctx,
