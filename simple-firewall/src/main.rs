@@ -220,7 +220,7 @@ async fn main() -> Result<(), anyhow::Error> {
                             &mut syn_buf
                         )
                     } else if conn.tcp_flag.eq(&18) {
-                        if connections.insert(conn.into_session(), conn.into_state_established(), 0).is_ok() {
+                        if connections.insert(conn.into_session(), conn.into_state_listen(), 0).is_ok() {
                             info!("Added New Known Connection");
                             connection_timer.insert(conn.into_session(), Instant::now());
                         }
