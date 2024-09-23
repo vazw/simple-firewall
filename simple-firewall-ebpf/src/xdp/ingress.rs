@@ -47,6 +47,7 @@ pub fn handle_tcp_xdp(
     protocal: IpProto,
 ) -> Result<u32, u32> {
     let ipv: *mut Ipv4Hdr = unsafe { ptr_at_mut(&ctx, EthHdr::LEN)? };
+    let total_length = unsafe { (*ipv).tot_len };
     let header: &TcpHdr = unsafe { ptr_at(&ctx, PROTOCAL_OFFSET)? };
     // get all flag at once by loading U|A|P|R|S|F in bits orders as u8
     let tcp_flag: u8 = header._bitfield_1.get(8, 6u8) as u8;
@@ -223,10 +224,12 @@ pub fn handle_tcp_xdp(
             }
             info!(
                 &ctx,
-                "XDP::TX TCP to {:i}:{} cookies {}",
+                "XDP::TX TCP to {:i}:{} cookies {} tcp doff {} total {}",
                 remote_addr.to_bits(),
                 remote_port,
-                cookie
+                cookie,
+                header.doff() * 4,
+                total_length
             );
         }
         Ok(xdp_action::XDP_TX)
