@@ -213,12 +213,14 @@ pub unsafe fn process_tcp_state_transition(
                 if 1u8.eq(&tcp_flag) {
                     connection_state.tcp_state = TCPState::FinWait1;
                     return true;
-                } else if 18u8.eq(&tcp_flag) {
-                    // THIS IS CUSTOM HANDLER INDICATED THAT THIS SOMETHIONG IS WORNG
-                    // AND FIREWALL SHOULD PROCESS THIS CONNECTION AGAIN WITH RESET
-                    connection_state.tcp_state = TCPState::Closed;
-                    return false;
                 }
+                // GOT RESET FROM TIME TO TIME WITH THIS SHIT
+                // else if 18u8.eq(&tcp_flag) {
+                //     // THIS IS CUSTOM HANDLER INDICATED THAT THIS SOMETHIONG IS WORNG
+                //     // AND FIREWALL SHOULD PROCESS THIS CONNECTION AGAIN WITH RESET
+                //     connection_state.tcp_state = TCPState::Closed;
+                //     return false;
+                // }
             } else if 16u8.eq(&tcp_flag)
                 && 1u8.eq(&connection_state.last_tcp_flag)
             {
