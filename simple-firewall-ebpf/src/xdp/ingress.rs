@@ -171,7 +171,7 @@ pub fn handle_tcp_xdp(
             bpf_tcp_raw_gen_syncookie_ipv4(
                 ipv as *mut _,
                 header_mut as *mut _,
-                header.doff() as u32 * 4,
+                TcpHdr::LEN as u32,
             )
         } as u32;
 
@@ -215,13 +215,11 @@ pub fn handle_tcp_xdp(
                 (*header_mut).ack_seq =
                     (u32::from_be((*header_mut).seq) + 1).to_be();
             }
-            if let Some(check) = csum_diff(
-                &header.seq,
-                &cookie.to_be(),
-                !((*header_mut).check as u32),
-            ) {
+            if let Some(check) =
+                csum_diff(&header.seq, &cookie, !((*header_mut).check as u32))
+            {
                 (*header_mut).check = csum_fold(check);
-                (*header_mut).seq = cookie.to_be();
+                (*header_mut).seq = cookie;
             }
             info!(
                 &ctx,
