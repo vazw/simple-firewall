@@ -1,6 +1,9 @@
 use aya_ebpf::{
     bindings::xdp_action,
-    helpers::{bpf_csum_diff, bpf_ktime_get_ns},
+    helpers::{
+        bpf_csum_diff, bpf_ktime_get_ns, bpf_tcp_raw_check_syncookie_ipv4,
+        bpf_tcp_raw_gen_syncookie_ipv4,
+    },
     programs::XdpContext,
 };
 use aya_log_ebpf::info;
@@ -15,9 +18,10 @@ use network_types::{
 };
 use simple_firewall_common::{Connection, TCPState};
 
-use crate::{helper::*, CONNECTIONS, NEW, TEMPORT, UNKNOWN};
+use crate::{helper::*, CONNECTIONS, NEW, TEMPORT};
 
 // TCP Struct
+// Doff = 4bit int represent 32Bit Word
 // +----------------------------+---------------------------+
 // |    Source Port (16 bits)   |Destination Port (16 bits) |
 // +----------------------------+---------------------------+
@@ -119,12 +123,14 @@ pub fn handle_tcp_xdp(
             );
             Ok(xdp_action::XDP_PASS)
         }
-    } else if 16u8.eq(&tcp_flag)
-        && let Some(cookie) =
-            // new connections will be handle here with tcp syn cookies
-            unsafe { UNKNOWN.get(&connection.remote_addr) }
-    {
-        let r = if u32::from_be(header.ack_seq) - 1 == (*cookie) {
+    } else if 16u8.eq(&tcp_flag) {
+        let check = unsafe {
+            bpf_tcp_raw_check_syncookie_ipv4(
+                ipv as *mut _,
+                header_mut as *mut _,
+            ) as u32
+        };
+        if check.eq(&0) {
             info!(
                 &ctx,
                 "Correct cookies on TCP from {:i}:{} creating connection",
@@ -149,11 +155,7 @@ pub fn handle_tcp_xdp(
                 remote_port,
             );
             Ok(xdp_action::XDP_DROP)
-        };
-        if unsafe { UNKNOWN.remove(&connection.remote_addr).is_ok() } {
-            aya_log_ebpf::info!(&ctx, "removed from unkown",);
         }
-        r
     } else if (tcp_dport_in(host_port) || tcp_sport_in(remote_port))
         && 2u8.eq(&tcp_flag)
     {
@@ -165,11 +167,13 @@ pub fn handle_tcp_xdp(
             remote_addr.to_bits(),
             remote_port,
         );
-        let cookie = unsafe { bpf_ktime_get_ns() >> 32 } as u32;
-        unsafe {
-            _ = UNKNOWN.insert(&connection.remote_addr, &cookie, 0);
-            // NEW.output(&ctx, &connection, 0);
-        }
+        let cookie = unsafe {
+            bpf_tcp_raw_gen_syncookie_ipv4(
+                ipv as *mut _,
+                header_mut as *mut _,
+                header.doff() as u32 * 4,
+            )
+        } as u32;
 
         let ethdr: *mut EthHdr = unsafe { ptr_at_mut(&ctx, 0)? };
         unsafe {

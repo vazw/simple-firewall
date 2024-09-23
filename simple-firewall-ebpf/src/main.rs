@@ -32,9 +32,6 @@ use crate::xdp::ingress::{handle_icmp_xdp, handle_tcp_xdp, handle_udp_xdp};
 static mut CONNECTIONS: HashMap<u32, ConnectionState> =
     HashMap::with_max_entries(u16::MAX as u32 + 1, 0);
 
-//Store u32 cookies on UNKNOWN MAP
-#[map(name = "UNKNOWN")]
-static mut UNKNOWN: HashMap<u32, u32> = HashMap::with_max_entries(2_000, 0);
 #[map(name = "NEW")]
 static mut NEW: PerfEventArray<Connection> =
     PerfEventArray::with_max_entries(2_000, 0);
