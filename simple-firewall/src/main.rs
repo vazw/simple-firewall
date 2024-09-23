@@ -216,7 +216,7 @@ async fn main() -> Result<(), anyhow::Error> {
                             conn.host_addr.into(),
                             conn.remote_port,
                             conn.host_port,
-                            conn.seq.to_be() -1,
+                            (conn.seq.to_le() -1).to_be(),
                             &mut syn_buf
                         )
                     } else if conn.tcp_flag.eq(&18) {
@@ -229,8 +229,8 @@ async fn main() -> Result<(), anyhow::Error> {
                             conn.host_addr.into(),
                             conn.remote_port,
                             conn.host_port,
-                            conn.ack_seq.to_be(),
-                            conn.seq.to_be()+1,
+                            conn.ack_seq,
+                            (conn.seq.to_le()+1).to_be(),
                             &mut ack_buf
                         )
 
