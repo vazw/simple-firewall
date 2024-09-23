@@ -99,8 +99,8 @@ pub fn handle_tcp_egress(
         remote_port,
         protocal as u8,
         tcp_flag,
-        tcp_hdr.seq,
-        tcp_hdr.ack_seq,
+        u32::from_be(tcp_hdr.seq),
+        u32::from_be(tcp_hdr.ack_seq),
     );
     let sums_key = connection.into_session();
     if let Ok(connection_state) = is_requested(&sums_key) {

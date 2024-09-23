@@ -57,8 +57,8 @@ pub fn handle_tcp_xdp(
         remote_port,
         protocal as u8,
         tcp_flag,
-        header.seq,
-        header.ack_seq,
+        u32::from_be(header.seq),
+        u32::from_be(header.ack_seq),
     );
     let sums_key = connection.into_session();
     let header_mut: *mut TcpHdr = unsafe { ptr_at_mut(&ctx, PROTOCAL_OFFSET)? };

@@ -209,14 +209,14 @@ async fn main() -> Result<(), anyhow::Error> {
             tokio::select! {
                 _ = interval_1.tick() => {
                 while let std::result::Result::Ok(conn) = new_rev.try_recv() {
-                    debug!("seq: {} ack_seq: {}", conn.seq.to_le(), conn.ack_seq.to_le());
+                    debug!("seq: {} ack_seq: {}", conn.seq, conn.ack_seq);
                     let packet = if conn.tcp_flag.eq(&16) {
                         create_tcp_syn_packet(
                             conn.remote_addr.into(),
                             conn.host_addr.into(),
                             conn.remote_port,
                             conn.host_port,
-                            (conn.seq.to_le() -1).to_be(),
+                            conn.seq +1,
                             &mut syn_buf
                         )
                     } else if conn.tcp_flag.eq(&18) {
@@ -230,7 +230,7 @@ async fn main() -> Result<(), anyhow::Error> {
                             conn.remote_port,
                             conn.host_port,
                             conn.ack_seq,
-                            (conn.seq.to_le()+1).to_be(),
+                            conn.seq + 1,
                             &mut ack_buf
                         )
 
