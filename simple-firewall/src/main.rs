@@ -170,7 +170,7 @@ async fn main() -> Result<(), anyhow::Error> {
         tokio::task::spawn(async move {
             // let mut u_connection: std::collections::HashMap<u32, Instant> =
             //     std::collections::HashMap::new();
-            let mut buf = vec![BytesMut::with_capacity(16); 2000];
+            let mut buf = vec![BytesMut::with_capacity(24); 2000];
             loop {
                 let events = perf_buf
                     .read_events(&mut buf)
@@ -207,7 +207,7 @@ async fn main() -> Result<(), anyhow::Error> {
         loop {
             tokio::select! {
                 _ = new_rev.recv() => {
-                if let Some(conn) = new_rev.recv().await {
+                while let std::result::Result::Ok(conn) = new_rev.try_recv() {
                     debug!("{:#?}", conn);
                     let packet = if conn.tcp_flag.eq(&16) {
                         create_tcp_syn_packet(
@@ -236,10 +236,10 @@ async fn main() -> Result<(), anyhow::Error> {
                     } else {continue};
                     match px.send_to(packet, std::net::IpAddr::V4(conn.remote_addr.into())) {
                         std::io::Result::Ok(n) => {
-                            println!("Proxy: Sent {n:?} bytes");
+                            info!("Proxy: Sent {n:?} bytes");
                         }
                         Err(_) => {
-                            println!("The packet wasnt sent. An error was detected");
+                            info!("The packet wasnt sent. An error was detected");
                         }
                     }
 
