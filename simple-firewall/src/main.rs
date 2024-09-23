@@ -190,6 +190,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let (tx, rx) = tokio::sync::watch::channel(false);
     let t = tokio::spawn(async move {
         let mut rx = rx.clone();
+        let mut interval_1 = interval(Duration::from_millis(25));
         let mut interval_2 = interval(Duration::from_millis(25));
         let (mut px, _) = match transport_channel(4096, protocol) {
             std::io::Result::Ok((tx, rx)) => (tx, rx),
@@ -206,7 +207,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
         loop {
             tokio::select! {
-                _ = new_rev.recv() => {
+                _ = interval_1.tick() => {
                 while let std::result::Result::Ok(conn) = new_rev.try_recv() {
                     debug!("{:#?}", conn);
                     let packet = if conn.tcp_flag.eq(&16) {
