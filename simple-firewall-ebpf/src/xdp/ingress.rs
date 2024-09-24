@@ -2,7 +2,7 @@ use aya_ebpf::{
     bindings::xdp_action,
     helpers::{
         bpf_csum_diff, bpf_ktime_get_ns, bpf_tcp_raw_check_syncookie_ipv4,
-        bpf_tcp_raw_gen_syncookie_ipv4, bpf_xdp_adjust_tail,
+        bpf_tcp_raw_gen_syncookie_ipv4,
     },
     programs::XdpContext,
 };

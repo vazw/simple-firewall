@@ -27,7 +27,10 @@ use crate::tc::egress::{
 };
 use crate::xdp::ingress::{handle_icmp_xdp, handle_tcp_xdp, handle_udp_xdp};
 
-// Allocated 20KB for connection
+//UP TO 100 in config length
+const CONFIG_MAP_SIZE: u32 = 100;
+
+// This should be enough for all port on a system
 #[map(name = "CONNECTIONS")]
 static mut CONNECTIONS: HashMap<u32, ConnectionState> =
     HashMap::with_max_entries(u16::MAX as u32 + 1, 0);
@@ -38,38 +41,37 @@ static mut NEW: PerfEventArray<Connection> =
 
 #[map(name = "TCP_IN_SPORT")]
 static mut TCP_IN_SPORT: HashMap<u16, u8> =
-    HashMap::with_max_entries(u16::MAX as u32 + 1, 0);
+    HashMap::with_max_entries(CONFIG_MAP_SIZE, 0);
 #[map(name = "TCP_IN_DPORT")]
 static mut TCP_IN_DPORT: HashMap<u16, u8> =
-    HashMap::with_max_entries(u16::MAX as u32 + 1, 0);
+    HashMap::with_max_entries(CONFIG_MAP_SIZE, 0);
 
 #[map(name = "TCP_OUT_SPORT")]
 static mut TCP_OUT_SPORT: HashMap<u16, u8> =
-    HashMap::with_max_entries(u16::MAX as u32 + 1, 0);
+    HashMap::with_max_entries(CONFIG_MAP_SIZE, 0);
 #[map(name = "TCP_OUT_DPORT")]
 static mut TCP_OUT_DPORT: HashMap<u16, u8> =
-    HashMap::with_max_entries(u16::MAX as u32 + 1, 0);
+    HashMap::with_max_entries(CONFIG_MAP_SIZE, 0);
 
 #[map(name = "UDP_IN_SPORT")]
 static mut UDP_IN_SPORT: HashMap<u16, u8> =
-    HashMap::with_max_entries(u16::MAX as u32 + 1, 0);
+    HashMap::with_max_entries(CONFIG_MAP_SIZE, 0);
 #[map(name = "UDP_IN_DPORT")]
 static mut UDP_IN_DPORT: HashMap<u16, u8> =
-    HashMap::with_max_entries(u16::MAX as u32 + 1, 0);
+    HashMap::with_max_entries(CONFIG_MAP_SIZE, 0);
 
 #[map(name = "UDP_OUT_SPORT")]
 static mut UDP_OUT_SPORT: HashMap<u16, u8> =
-    HashMap::with_max_entries(u16::MAX as u32 + 1, 0);
+    HashMap::with_max_entries(CONFIG_MAP_SIZE, 0);
 #[map(name = "UDP_OUT_DPORT")]
 static mut UDP_OUT_DPORT: HashMap<u16, u8> =
-    HashMap::with_max_entries(u16::MAX as u32 + 1, 0);
+    HashMap::with_max_entries(CONFIG_MAP_SIZE, 0);
 
 #[map(name = "DNS_ADDR")]
 static mut DNS_ADDR: HashMap<u32, u8> = HashMap::with_max_entries(32, 0);
 
 #[map(name = "TEMPORT")]
-static mut TEMPORT: HashMap<u16, u8> =
-    HashMap::with_max_entries(u16::MAX as u32 + 1, 0);
+static mut TEMPORT: HashMap<u16, u8> = HashMap::with_max_entries(256, 0);
 
 #[xdp]
 pub fn sfw(ctx: XdpContext) -> u32 {

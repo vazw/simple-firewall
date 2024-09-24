@@ -158,6 +158,7 @@ async fn main() -> Result<(), anyhow::Error> {
     )?;
     let (new_send, mut new_rev) = tokio::sync::mpsc::channel(2000);
     for cpu_id in online_cpus()? {
+        let mut interval_1 = interval(Duration::from_millis(25));
         let new_send = new_send.clone();
         let mut perf_buf = new_connection.open(cpu_id, None)?;
         tokio::task::spawn(async move {
@@ -175,6 +176,8 @@ async fn main() -> Result<(), anyhow::Error> {
                     _ = new_send.send(key).await;
                     // u_connection.insert(key.into_session(), Instant::now());
                 }
+                // Add some pause for better performance
+                interval_1.tick().await;
             }
             Ok::<_>(())
         });
