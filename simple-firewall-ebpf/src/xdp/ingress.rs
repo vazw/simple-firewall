@@ -2,7 +2,7 @@ use aya_ebpf::{
     bindings::xdp_action,
     helpers::{
         bpf_csum_diff, bpf_ktime_get_ns, bpf_tcp_raw_check_syncookie_ipv4,
-        bpf_tcp_raw_gen_syncookie_ipv4,
+        bpf_tcp_raw_gen_syncookie_ipv4, bpf_xdp_adjust_tail,
     },
     programs::XdpContext,
 };
@@ -171,6 +171,12 @@ pub fn handle_tcp_xdp(
             remote_addr.to_bits(),
             remote_port,
         );
+        let pk_len = (ctx.data_end() - ctx.data() - PROTOCAL_OFFSET) as u32;
+        let thl = (header.doff() * 4) as u32;
+        if pk_len < thl {
+            let diff = thl - pk_len;
+            unsafe { bpf_xdp_adjust_tail(ctx.ctx, diff as i32) };
+        }
         let cookie = unsafe {
             bpf_tcp_raw_gen_syncookie_ipv4(
                 ipv as *mut _,
