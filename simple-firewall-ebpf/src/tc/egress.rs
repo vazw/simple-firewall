@@ -126,10 +126,7 @@ pub fn handle_tcp_egress(
             remote_port,
         );
         Ok(TC_ACT_PIPE)
-    } else if (tcp_dport_out(remote_port) || tcp_sport_out(host_port))
-        // filter syn for connect or push ack for rst only
-        && (2u8.eq(&tcp_flag) || 24u8.eq(&tcp_flag))
-    {
+    } else if (tcp_dport_out(remote_port) || tcp_sport_out(host_port)) {
         add_request(&sums_key, &connection.into_state_sent());
         aya_log_ebpf::info!(
             &ctx,
