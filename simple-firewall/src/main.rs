@@ -165,7 +165,7 @@ async fn main() -> Result<(), anyhow::Error> {
             Instant,
             BuildNoHashHasher<u32>,
         > = std::collections::HashMap::with_capacity_and_hasher(
-            262_144,
+            100_000,
             nohash_hasher::BuildNoHashHasher::default(),
         );
         let mut connections: HashMap<_, u32, ConnectionState> =
