@@ -99,7 +99,7 @@ pub fn csum_fold_helper(mut csum: u64) -> u16 {
     }
     !(csum as u16)
 }
-//
+
 // // Max header length
 // const MAX_CSUM_WORDS: usize = 20;
 // #[inline(always)]

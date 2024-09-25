@@ -21,7 +21,8 @@ use simple_firewall_common::{Connection, TCPState};
 use crate::{helper::*, CONNECTIONS, NEW, TEMPORT};
 
 // TCP Struct
-// Doff = 4bit int represent 32Bit Word
+// Doff = 4bit int represent how many 32Bit Word of TCP header length
+// TOTAL TCP HEADER LENGTH = Doff * 4 min=20 max=60
 // +----------------------------+---------------------------+
 // |    Source Port (16 bits)   |Destination Port (16 bits) |
 // +----------------------------+---------------------------+
