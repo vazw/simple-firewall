@@ -7,12 +7,10 @@ use std::time::Instant;
 use helper::*;
 
 use anyhow::Ok;
-use aya::maps::{AsyncPerfEventArray, HashMap};
+use aya::maps::{HashMap, RingBuf};
 use aya::programs::{tc, SchedClassifier, TcAttachType, Xdp, XdpFlags};
-use aya::util::online_cpus;
 use aya::{include_bytes_aligned, Bpf};
 use aya_log::BpfLogger;
-use bytes::BytesMut;
 use clap::Parser;
 use figment::{
     providers::{Format, Toml},
@@ -32,7 +30,9 @@ use log4rs::encode::pattern::PatternEncoder;
 use log4rs::config::{Appender, Root};
 use log4rs::Config;
 
+use nohash_hasher::BuildNoHashHasher;
 use simple_firewall_common::{Connection, ConnectionState};
+use tokio::io::unix::AsyncFd;
 use tokio::signal;
 use tokio::time::{interval, Duration};
 
@@ -153,56 +153,44 @@ async fn main() -> Result<(), anyhow::Error> {
     );
     config_len = config_.len();
     _ = load_config(&mut bpf, &config_);
-    let mut new_connection = AsyncPerfEventArray::try_from(
-        bpf.take_map("NEW").expect("Map is Exist"),
-    )?;
-    let (new_send, mut new_rev) = tokio::sync::mpsc::channel(2000);
-    for cpu_id in online_cpus()? {
-        let mut interval_1 = interval(Duration::from_millis(25));
-        let new_send = new_send.clone();
-        let mut perf_buf = new_connection.open(cpu_id, None)?;
-        tokio::task::spawn(async move {
-            // let mut u_connection: std::collections::HashMap<u32, Instant> =
-            //     std::collections::HashMap::new();
-            let mut buf = vec![BytesMut::with_capacity(16); 2000];
-            loop {
-                let events = perf_buf
-                    .read_events(&mut buf)
-                    .await
-                    .expect("new conection event");
-                for event in buf.iter_mut().take(events.read) {
-                    let key =
-                        unsafe { &*(event.as_ptr() as *const Connection) };
-                    _ = new_send.send(key).await;
-                    // u_connection.insert(key.into_session(), Instant::now());
-                }
-                // Add some pause for better performance
-                interval_1.tick().await;
-            }
-            Ok::<_>(())
-        });
-    }
 
+    let ring_buf = RingBuf::try_from(bpf.take_map("NEW").unwrap())?;
     let (tx, rx) = tokio::sync::watch::channel(false);
     let t = tokio::spawn(async move {
         let mut rx = rx.clone();
-        let mut interval_1 = interval(Duration::from_millis(25));
+        let mut async_fd = AsyncFd::new(ring_buf).unwrap();
         let mut interval_2 = interval(Duration::from_millis(25));
-        let mut connection_timer: std::collections::HashMap<u32, Instant> =
-            std::collections::HashMap::with_capacity(262_144);
+        let mut connection_timer: std::collections::HashMap<
+            u32,
+            Instant,
+            BuildNoHashHasher<u32>,
+        > = std::collections::HashMap::with_capacity_and_hasher(
+            262_144,
+            nohash_hasher::BuildNoHashHasher::default(),
+        );
         let mut connections: HashMap<_, u32, ConnectionState> =
             HashMap::try_from(bpf.take_map("CONNECTIONS").unwrap())?;
 
         loop {
             tokio::select! {
-                _ = interval_1.tick() => {
-                    while let std::result::Result::Ok(conn) = new_rev.try_recv() {
-                        if let Some(timer) = connection_timer.get_mut(&conn.into_session()) {
+                _ = async_fd.readable_mut() => {
+                    let mut guard = async_fd.readable_mut().await.unwrap();
+                    let rb = guard.get_inner_mut();
+
+                    while let Some(read) = rb.next() {
+                        let data = read.as_ptr();
+                        let contrack = unsafe { std::ptr::read_unaligned::<Connection>(data as *const Connection) };
+                        let idx = contrack.into_session();
+                        if let Some(timer) = connection_timer.get_mut(&idx) {
                             *timer = Instant::now();
-                        }else {
-                            connection_timer.insert(conn.into_session(), Instant::now());
+                        } else {
+                            connection_timer.insert(idx, Instant::now());
+                            debug!("New timmer added for : {}", Ipv4Addr::from_bits(idx).to_string())
                         }
+
                     }
+                    guard.clear_ready();
+
                 }
 
                 _ = rx.changed() => {

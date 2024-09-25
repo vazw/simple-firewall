@@ -19,6 +19,7 @@ network-types = "0.0.7"
 bytes = "1.6.0"
 serde = { version = "1.0.204", features = ["derive"] }
 log4rs = { version = "1.3.0", features = ["gzip"] }
+nohash-hasher = "0.2.0"
 
 
 [[bin]]
