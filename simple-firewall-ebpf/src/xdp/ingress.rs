@@ -41,6 +41,9 @@ use crate::{helper::*, CONNECTIONS, NEW, TEMPORT};
 // |                        Data...                         |
 // |                                                        |
 // +--------------------------------------------------------+
+// # Verifier not happy with TCP header options
+// https://github.com/gamemann/XDP-TCP-Header-Options?tab=readme-ov-file
+//
 pub fn handle_tcp_xdp(
     ctx: XdpContext,
     host_addr: Ipv4Addr,
