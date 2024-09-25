@@ -122,7 +122,7 @@ pub fn handle_tcp_xdp(
             bpf_tcp_raw_check_syncookie_ipv4(
                 ipv as *mut _,
                 header_mut as *mut _,
-            ) as u32
+            ) as i32
         };
         info!(&ctx, "cookies {} check {}", cookie, check);
         if 0 < (check as i64 - cookie) && (check as i64 - cookie) < 10 {
@@ -223,13 +223,11 @@ pub fn handle_tcp_xdp(
                 header_mut as *mut _,
                 TcpHdr::LEN as u32,
             ) as u32;
-            if let Some(check) = csum_diff(
-                &header.seq,
-                &cookie.to_be(),
-                !((*header_mut).check as u32),
-            ) {
+            if let Some(check) =
+                csum_diff(&header.seq, &cookie, !((*header_mut).check as u32))
+            {
                 (*header_mut).check = csum_fold(check);
-                (*header_mut).seq = cookie.to_be();
+                (*header_mut).seq = cookie;
             }
             info!(
                 &ctx,
