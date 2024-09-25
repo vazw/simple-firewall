@@ -176,13 +176,6 @@ pub fn handle_tcp_xdp(
         //         ) as u32
         //     }
         // } else {
-        let cookie = unsafe {
-            bpf_tcp_raw_gen_syncookie_ipv4(
-                ipv as *mut _,
-                header_mut as *mut _,
-                TcpHdr::LEN as u32,
-            )
-        } as u32;
         // };
 
         let ethdr: *mut EthHdr = unsafe { ptr_at_mut(&ctx, 0)? };
@@ -225,6 +218,11 @@ pub fn handle_tcp_xdp(
                 (*header_mut).ack_seq =
                     (u32::from_be((*header_mut).seq) + 1).to_be();
             }
+            let cookie = bpf_tcp_raw_gen_syncookie_ipv4(
+                ipv as *mut _,
+                header_mut as *mut _,
+                TcpHdr::LEN as u32,
+            ) as u32;
             if let Some(check) = csum_diff(
                 &header.seq,
                 &cookie.to_be(),
