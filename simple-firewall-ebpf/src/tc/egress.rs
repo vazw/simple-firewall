@@ -1,5 +1,6 @@
 use aya_ebpf::{
     bindings::{TC_ACT_PIPE, TC_ACT_SHOT},
+    helpers::bpf_ktime_get_ns,
     programs::TcContext,
 };
 
@@ -7,7 +8,7 @@ use core::net::Ipv4Addr;
 use network_types::{icmp::IcmpHdr, ip::IpProto, tcp::TcpHdr, udp::UdpHdr};
 use simple_firewall_common::{Connection, TCPState};
 
-use crate::{helper::*, CONNECTIONS, TEMPORT};
+use crate::{helper::*, CONNECTIONS, NEW, TEMPORT};
 
 pub fn handle_udp_egress(
     ctx: TcContext,
@@ -100,6 +101,15 @@ pub fn handle_tcp_egress(
     );
     let sums_key = connection.into_session();
     if let Ok(connection_state) = is_requested(&sums_key) {
+        let current_time = unsafe { bpf_ktime_get_ns() };
+        if (current_time - unsafe { (*connection_state).last_syn_ack_time })
+            .gt(&1_000_000_000)
+        {
+            unsafe {
+                _ = NEW.output(&connection, 0);
+                (*connection_state).last_syn_ack_time = current_time;
+            }
+        }
         let transitioned = unsafe {
             process_tcp_state_transition(
                 false,
@@ -127,6 +137,7 @@ pub fn handle_tcp_egress(
         );
         Ok(TC_ACT_PIPE)
     } else if tcp_dport_out(remote_port) || tcp_sport_out(host_port) {
+        unsafe { _ = NEW.output(&connection, 0) };
         add_request(&sums_key, &connection.into_state_sent());
         aya_log_ebpf::info!(
             &ctx,

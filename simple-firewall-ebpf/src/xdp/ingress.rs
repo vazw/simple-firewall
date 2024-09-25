@@ -1,7 +1,7 @@
 use aya_ebpf::{
     bindings::xdp_action,
     helpers::{
-        bpf_csum_diff, bpf_ktime_get_ns, bpf_tcp_raw_check_syncookie_ipv4,
+        bpf_csum_diff, bpf_tcp_raw_check_syncookie_ipv4,
         bpf_tcp_raw_gen_syncookie_ipv4,
     },
     programs::XdpContext,
@@ -69,15 +69,6 @@ pub fn handle_tcp_xdp(
     if let Some(connection_state) =
         unsafe { CONNECTIONS.get_ptr_mut(&sums_key) }
     {
-        let current_time = unsafe { bpf_ktime_get_ns() };
-        if (current_time - unsafe { (*connection_state).last_syn_ack_time })
-            .gt(&1_000_000_000)
-        {
-            unsafe {
-                NEW.output(&ctx, &connection, 0);
-                (*connection_state).last_syn_ack_time = current_time;
-            }
-        }
         let transitioned = unsafe {
             process_tcp_state_transition(
                 true,
@@ -126,12 +117,12 @@ pub fn handle_tcp_xdp(
             Ok(xdp_action::XDP_PASS)
         }
     } else if 16u8.eq(&tcp_flag) {
-        let cookie = header.ack_seq.to_be();
+        let cookie = u32::from_be(header.ack_seq) as i64;
         let check = unsafe {
             bpf_tcp_raw_check_syncookie_ipv4(
                 ipv as *mut _,
                 header_mut as *mut _,
-            ) as u32
+            ) as i64
         };
         info!(&ctx, "cookies {} check {}", cookie, check,);
         if 0 < (check - cookie) && (check - cookie) < 10 {
@@ -141,7 +132,7 @@ pub fn handle_tcp_xdp(
                 remote_addr.to_bits(),
                 remote_port,
             );
-            unsafe { NEW.output(&ctx, &connection, 0) };
+            unsafe { _ = NEW.output(&connection, 0) };
             unsafe {
                 if CONNECTIONS
                     .insert(&sums_key, &connection.into_state_listen(), 0)

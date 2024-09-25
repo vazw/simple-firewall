@@ -12,7 +12,7 @@ use helper::*;
 use aya_ebpf::{
     bindings::{xdp_action, TC_ACT_PIPE},
     macros::{classifier, map, xdp},
-    maps::{HashMap, PerfEventArray},
+    maps::{HashMap, RingBuf},
     programs::{TcContext, XdpContext},
 };
 
@@ -20,7 +20,7 @@ use network_types::{
     eth::{EthHdr, EtherType},
     ip::{IpProto, Ipv4Hdr},
 };
-use simple_firewall_common::{Connection, ConnectionState};
+use simple_firewall_common::ConnectionState;
 
 use crate::tc::egress::{
     handle_icmp_egress, handle_tcp_egress, handle_udp_egress,
@@ -35,9 +35,9 @@ const CONFIG_MAP_SIZE: u32 = 100;
 static mut CONNECTIONS: HashMap<u32, ConnectionState> =
     HashMap::with_max_entries(u16::MAX as u32 + 1, 0);
 
+//Reserve 1MiB of RingBuf
 #[map(name = "NEW")]
-static mut NEW: PerfEventArray<Connection> =
-    PerfEventArray::with_max_entries(2_000, 0);
+static mut NEW: RingBuf = RingBuf::with_byte_size(1048576, 0);
 
 #[map(name = "TCP_IN_SPORT")]
 static mut TCP_IN_SPORT: HashMap<u16, u8> =
