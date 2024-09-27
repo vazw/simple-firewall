@@ -2,7 +2,6 @@
 #![no_main]
 #![allow(incomplete_features)]
 #![feature(generic_const_exprs)]
-#![feature(let_chains)]
 
 mod helper;
 mod tc;
@@ -32,46 +31,46 @@ const CONFIG_MAP_SIZE: u32 = 100;
 
 // This should be enough for all port on a system
 #[map(name = "CONNECTIONS")]
-static mut CONNECTIONS: HashMap<u32, ConnectionState> =
+static CONNECTIONS: HashMap<u32, ConnectionState> =
     HashMap::with_max_entries(u16::MAX as u32 + 1, 0);
 
 //Reserve 1MiB of RingBuf
 #[map(name = "NEW")]
-static mut NEW: RingBuf = RingBuf::with_byte_size(1048576, 0);
+static NEW: RingBuf = RingBuf::with_byte_size(1048576, 0);
 
 #[map(name = "TCP_IN_SPORT")]
-static mut TCP_IN_SPORT: HashMap<u16, u8> =
+static TCP_IN_SPORT: HashMap<u16, u8> =
     HashMap::with_max_entries(CONFIG_MAP_SIZE, 0);
 #[map(name = "TCP_IN_DPORT")]
-static mut TCP_IN_DPORT: HashMap<u16, u8> =
+static TCP_IN_DPORT: HashMap<u16, u8> =
     HashMap::with_max_entries(CONFIG_MAP_SIZE, 0);
 
 #[map(name = "TCP_OUT_SPORT")]
-static mut TCP_OUT_SPORT: HashMap<u16, u8> =
+static TCP_OUT_SPORT: HashMap<u16, u8> =
     HashMap::with_max_entries(CONFIG_MAP_SIZE, 0);
 #[map(name = "TCP_OUT_DPORT")]
-static mut TCP_OUT_DPORT: HashMap<u16, u8> =
+static TCP_OUT_DPORT: HashMap<u16, u8> =
     HashMap::with_max_entries(CONFIG_MAP_SIZE, 0);
 
 #[map(name = "UDP_IN_SPORT")]
-static mut UDP_IN_SPORT: HashMap<u16, u8> =
+static UDP_IN_SPORT: HashMap<u16, u8> =
     HashMap::with_max_entries(CONFIG_MAP_SIZE, 0);
 #[map(name = "UDP_IN_DPORT")]
-static mut UDP_IN_DPORT: HashMap<u16, u8> =
+static UDP_IN_DPORT: HashMap<u16, u8> =
     HashMap::with_max_entries(CONFIG_MAP_SIZE, 0);
 
 #[map(name = "UDP_OUT_SPORT")]
-static mut UDP_OUT_SPORT: HashMap<u16, u8> =
+static UDP_OUT_SPORT: HashMap<u16, u8> =
     HashMap::with_max_entries(CONFIG_MAP_SIZE, 0);
 #[map(name = "UDP_OUT_DPORT")]
-static mut UDP_OUT_DPORT: HashMap<u16, u8> =
+static UDP_OUT_DPORT: HashMap<u16, u8> =
     HashMap::with_max_entries(CONFIG_MAP_SIZE, 0);
 
 #[map(name = "DNS_ADDR")]
-static mut DNS_ADDR: HashMap<u32, u8> = HashMap::with_max_entries(32, 0);
+static DNS_ADDR: HashMap<u32, u8> = HashMap::with_max_entries(32, 0);
 
 #[map(name = "TEMPORT")]
-static mut TEMPORT: HashMap<u16, u8> = HashMap::with_max_entries(256, 0);
+static TEMPORT: HashMap<u16, u8> = HashMap::with_max_entries(256, 0);
 
 #[xdp]
 pub fn sfw(ctx: XdpContext) -> u32 {

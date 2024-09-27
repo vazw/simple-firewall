@@ -100,45 +100,6 @@ pub fn csum_fold_helper(mut csum: u64) -> u16 {
     !(csum as u16)
 }
 
-// // Max header length
-// const MAX_CSUM_WORDS: usize = 20;
-// #[inline(always)]
-// pub fn l4_csum_helper(ctx: &XdpContext) -> u64 {
-//     let mut s: u64 = 0;
-//     let offset = PROTOCAL_OFFSET;
-//     // start at tcp header
-//     let data = ctx.data() + offset;
-//     // end at last tcp options
-//     let data_end = ctx.data_end();
-//     // let data_end = data + 60;
-//     for i in 0..MAX_CSUM_WORDS {
-//         if data + 4 * i + 4 > data_end {
-//             if let Ok(word) =
-//                 unsafe { bpf_probe_read_kernel((data + 4 * i) as *const u16) }
-//             {
-//                 s += word as u64;
-//             } else if let Ok(word) =
-//                 unsafe { bpf_probe_read_kernel((data + 4 * i) as *const u8) }
-//             {
-//                 s += word as u64;
-//             }
-//             if let Ok(word) = unsafe {
-//                 bpf_probe_read_kernel((data + 4 * i + 2) as *const u8)
-//             } {
-//                 s += word as u64;
-//             }
-//             break;
-//         }
-//         // READ 4 Bytes at a time.
-//         if let Ok(word) =
-//             unsafe { bpf_probe_read_kernel((data + 4 * i) as *const u32) }
-//         {
-//             s += word as u64;
-//         }
-//     }
-//     s
-// }
-
 // urg ack psh rst syn fin
 // U   A   P   R   S   F
 // 32  16  8   4   2   1
@@ -321,47 +282,47 @@ pub fn is_requested(session: &u32) -> Result<*mut ConnectionState, ()> {
 
 #[inline(always)]
 pub fn add_request(session: &u32, connection_state: &ConnectionState) -> bool {
-    unsafe { CONNECTIONS.insert(session, connection_state, 0).is_ok() }
+    CONNECTIONS.insert(session, connection_state, 0).is_ok()
 }
 
 #[inline(always)]
 pub fn tcp_sport_in(port: u16) -> bool {
-    unsafe { TCP_IN_SPORT.get(&port).is_some() }
+    unsafe { TCP_IN_SPORT.get(&port) }.is_some()
 }
 #[inline(always)]
 pub fn tcp_dport_in(port: u16) -> bool {
-    unsafe { TCP_IN_DPORT.get(&port).is_some() }
+    unsafe { TCP_IN_DPORT.get(&port) }.is_some()
 }
 
 #[inline(always)]
 pub fn tcp_sport_out(port: u16) -> bool {
-    unsafe { TCP_OUT_SPORT.get(&port).is_some() }
+    unsafe { TCP_OUT_SPORT.get(&port) }.is_some()
 }
 #[inline(always)]
 pub fn tcp_dport_out(port: u16) -> bool {
-    unsafe { TCP_OUT_DPORT.get(&port).is_some() }
+    unsafe { TCP_OUT_DPORT.get(&port) }.is_some()
 }
 
 #[inline(always)]
 pub fn udp_sport_in(port: u16) -> bool {
-    unsafe { UDP_IN_SPORT.get(&port).is_some() }
+    unsafe { UDP_IN_SPORT.get(&port) }.is_some()
 }
 #[inline(always)]
 pub fn udp_dport_in(port: u16) -> bool {
-    unsafe { UDP_IN_DPORT.get(&port).is_some() }
+    unsafe { UDP_IN_DPORT.get(&port) }.is_some()
 }
 
 #[inline(always)]
 pub fn udp_sport_out(port: u16) -> bool {
-    unsafe { UDP_OUT_SPORT.get(&port).is_some() }
+    unsafe { UDP_OUT_SPORT.get(&port) }.is_some()
 }
 
 #[inline(always)]
 pub fn udp_dport_out(port: u16) -> bool {
-    unsafe { UDP_OUT_DPORT.get(&port).is_some() }
+    unsafe { UDP_OUT_DPORT.get(&port) }.is_some()
 }
 
 #[inline(always)]
 pub fn ip_addr_allowed(addrs: &u32) -> bool {
-    unsafe { DNS_ADDR.get(addrs).is_some() }
+    unsafe { DNS_ADDR.get(addrs) }.is_some()
 }

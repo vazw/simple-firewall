@@ -50,9 +50,9 @@ pub fn handle_tcp_xdp(
     remote_addr: Ipv4Addr,
     protocal: IpProto,
 ) -> Result<u32, u32> {
-    let ipv: *mut Ipv4Hdr = unsafe { ptr_at_mut(&ctx, EthHdr::LEN)? };
+    let ipv: *mut Ipv4Hdr = unsafe { ptr_at_mut(&ctx, EthHdr::LEN) }?;
     // let total_length = u16::from_be(unsafe { (*ipv).tot_len }) as u32;
-    let header: &TcpHdr = unsafe { ptr_at(&ctx, PROTOCAL_OFFSET)? };
+    let header: &TcpHdr = unsafe { ptr_at(&ctx, PROTOCAL_OFFSET) }?;
     // get all flag at once by loading U|A|P|R|S|F in bits orders as u8
     let tcp_flag: u8 = header._bitfield_1.get(8, 6u8) as u8;
 
@@ -69,9 +69,7 @@ pub fn handle_tcp_xdp(
     );
     let sums_key = connection.into_session();
     let header_mut: *mut TcpHdr = unsafe { ptr_at_mut(&ctx, PROTOCAL_OFFSET)? };
-    if let Some(connection_state) =
-        unsafe { CONNECTIONS.get_ptr_mut(&sums_key) }
-    {
+    if let Some(connection_state) = CONNECTIONS.get_ptr_mut(&sums_key) {
         let transitioned = unsafe {
             process_tcp_state_transition(
                 true,
@@ -79,10 +77,10 @@ pub fn handle_tcp_xdp(
                 tcp_flag,
             )
         };
-        unsafe { (*connection_state).last_tcp_flag = tcp_flag };
+        unsafe { *connection_state }.last_tcp_flag = tcp_flag;
         if transitioned {
-            if unsafe { (*connection_state).tcp_state.eq(&TCPState::Closed) } {
-                _ = unsafe { CONNECTIONS.remove(&sums_key) };
+            if unsafe { *connection_state }.tcp_state.eq(&TCPState::Closed) {
+                _ = CONNECTIONS.remove(&sums_key);
                 info!(
                     &ctx,
                     "Closing TCP to {:i}:{}",
@@ -100,9 +98,8 @@ pub fn handle_tcp_xdp(
                 Ok(xdp_action::XDP_PASS)
             }
         // Not transitioned
-        } else if unsafe { (*connection_state).tcp_state.eq(&TCPState::Closed) }
-        {
-            _ = unsafe { CONNECTIONS.remove(&sums_key) };
+        } else if unsafe { *connection_state }.tcp_state.eq(&TCPState::Closed) {
+            _ = CONNECTIONS.remove(&sums_key);
             info!(
                 &ctx,
                 "Drop Closed TCP to {:i}:{}",
@@ -136,14 +133,12 @@ pub fn handle_tcp_xdp(
                 remote_addr.to_bits(),
                 remote_port,
             );
-            unsafe { _ = NEW.output(&connection, 0) };
-            unsafe {
-                if CONNECTIONS
-                    .insert(&sums_key, &connection.into_state_listen(), 0)
-                    .is_ok()
-                {
-                    info!(&ctx, "Added new con");
-                }
+            _ = NEW.output(&connection, 0);
+            if CONNECTIONS
+                .insert(&sums_key, &connection.into_state_listen(), 0)
+                .is_ok()
+            {
+                info!(&ctx, "Added new con");
             }
             Ok(xdp_action::XDP_PASS)
         } else {
@@ -263,12 +258,12 @@ pub fn handle_udp_xdp(
     remote_addr: Ipv4Addr,
     protocal: IpProto,
 ) -> Result<u32, u32> {
-    let header: &UdpHdr = unsafe { ptr_at(&ctx, PROTOCAL_OFFSET)? };
+    let header: &UdpHdr = unsafe { ptr_at(&ctx, PROTOCAL_OFFSET) }?;
     // external host_port comming from outside
     let remote_port = u16::from_be(header.source);
     // Allow to acsess is_broadcast request
-    if unsafe { TEMPORT.get(&remote_port).is_some() } {
-        _ = unsafe { TEMPORT.remove(&remote_port) };
+    if unsafe { TEMPORT.get(&remote_port) }.is_some() {
+        _ = TEMPORT.remove(&remote_port);
         return Ok(xdp_action::XDP_PASS);
     }
     // someone reaching to internal host_port
@@ -337,6 +332,7 @@ pub fn handle_icmp_xdp(
     );
     // }
     match icmp_type {
+        // Dont let anyone ping :D
         ICMP_ECHO_REQUEST => Ok(xdp_action::XDP_DROP),
         ICMP_DEST_UNREACH => Ok(xdp_action::XDP_PASS),
         ICMP_ECHO_REPLY => Ok(xdp_action::XDP_PASS),

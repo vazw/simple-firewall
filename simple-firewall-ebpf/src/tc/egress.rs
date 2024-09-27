@@ -20,7 +20,7 @@ pub fn handle_udp_egress(
     let host_port = u16::from_be(udp_hdr.source);
     let remote_port = u16::from_be(udp_hdr.dest);
     if remote_addr.is_broadcast() || remote_port.eq(&123) {
-        _ = unsafe { TEMPORT.insert(&remote_port, &1, 0) };
+        _ = TEMPORT.insert(&remote_port, &1, 0);
         return Ok(TC_ACT_PIPE);
     }
     let connection = Connection::egress(
@@ -86,7 +86,7 @@ pub fn handle_tcp_egress(
 ) -> Result<i32, i32> {
     // gather the TCP header
     // let size = unsafe { (*ip_hdr).tot_len };
-    let tcp_hdr: &TcpHdr = unsafe { tc_ptr_at(&ctx, PROTOCAL_OFFSET)? };
+    let tcp_hdr: &TcpHdr = unsafe { tc_ptr_at(&ctx, PROTOCAL_OFFSET) }?;
     let host_port = u16::from_be(tcp_hdr.source);
     let remote_port = u16::from_be(tcp_hdr.dest);
     let tcp_flag: u8 = tcp_hdr._bitfield_1.get(8, 6u8) as u8;
@@ -102,13 +102,11 @@ pub fn handle_tcp_egress(
     let sums_key = connection.into_session();
     if let Ok(connection_state) = is_requested(&sums_key) {
         let current_time = unsafe { bpf_ktime_get_ns() };
-        if (current_time - unsafe { (*connection_state).last_syn_ack_time })
+        if (current_time - unsafe { *connection_state }.last_syn_ack_time)
             .gt(&1_000_000_000)
         {
-            unsafe {
-                _ = NEW.output(&connection, 0);
-                (*connection_state).last_syn_ack_time = current_time;
-            }
+            _ = NEW.output(&connection, 0);
+            unsafe { *connection_state }.last_syn_ack_time = current_time;
         }
         let transitioned = unsafe {
             process_tcp_state_transition(
@@ -117,11 +115,11 @@ pub fn handle_tcp_egress(
                 tcp_flag,
             )
         };
-        unsafe { (*connection_state).last_tcp_flag = tcp_flag };
+        unsafe { *connection_state }.last_tcp_flag = tcp_flag;
         if transitioned
-            && unsafe { (*connection_state).tcp_state.eq(&TCPState::Closed) }
+            && unsafe { *connection_state }.tcp_state.eq(&TCPState::Closed)
         {
-            _ = unsafe { CONNECTIONS.remove(&sums_key) };
+            _ = CONNECTIONS.remove(&sums_key);
             aya_log_ebpf::info!(
                 &ctx,
                 "EGRESS Closing TCP to {:i}:{}",
@@ -137,7 +135,7 @@ pub fn handle_tcp_egress(
         );
         Ok(TC_ACT_PIPE)
     } else if tcp_dport_out(remote_port) || tcp_sport_out(host_port) {
-        unsafe { _ = NEW.output(&connection, 0) };
+        _ = NEW.output(&connection, 0);
         add_request(&sums_key, &connection.into_state_sent());
         aya_log_ebpf::info!(
             &ctx,
