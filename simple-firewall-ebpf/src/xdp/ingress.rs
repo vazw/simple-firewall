@@ -53,7 +53,7 @@ pub fn handle_tcp_xdp(
     let ipv: *mut Ipv4Hdr = unsafe { ptr_at_mut(&ctx, EthHdr::LEN) }?;
     // let total_length = u16::from_be(unsafe { (*ipv).tot_len }) as u32;
     let header: &TcpHdr = unsafe { ptr_at(&ctx, PROTOCAL_OFFSET) }?;
-    // get all flag at once by loading U|A|P|R|S|F in bits orders as u8
+    // get all flag at once by loading U|A|P|R|S|F in bits orders as u8le
     let tcp_flag: u8 = header._bitfield_1.get(8, 6u8) as u8;
 
     let remote_port = u16::from_be(header.source);

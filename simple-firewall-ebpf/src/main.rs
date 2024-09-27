@@ -89,11 +89,18 @@ fn try_simple_firewall(ctx: XdpContext) -> Result<u32, u32> {
             let host_addr = ipv.dst_addr();
             let protocal = ipv.proto;
             // Won't mess with DNS, mulicast and Broadcast
-            if (host_addr.is_private()
-                || host_addr.is_unspecified()
-                || matches!(host_addr.octets(), [.., 255]))
+            // Let local broadcast and multicast pass
+            if host_addr.is_private()
                 && (remote_addr.is_multicast()
                     || matches!(remote_addr.octets(), [.., 255]))
+            // || remote_addr.is_private())
+            {
+                return Ok(xdp_action::XDP_PASS);
+            }
+            if matches!(host_addr.octets(), [.., 255])
+                && (remote_addr.is_multicast()
+                    || matches!(remote_addr.octets(), [.., 255])
+                    || remote_addr.is_private())
             // || remote_addr.is_private())
             {
                 return Ok(xdp_action::XDP_PASS);
