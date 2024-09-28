@@ -264,7 +264,7 @@ pub fn handle_tcp_xdp(
                     info!(&ctx, "{} {}", option_type, option_len);
                     if option_type == 2 {
                         let mss: *mut u16 =
-                            ptr_at_mut(&ctx, option_offset + 1usize)?;
+                            ptr_at_mut(&ctx, option_offset + 2usize)?;
                         if let Some(check) = csum_diff(
                             &(*mss),
                             &cookie.mss.to_be(),
