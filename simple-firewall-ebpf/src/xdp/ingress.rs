@@ -165,11 +165,12 @@ pub fn handle_tcp_xdp(
     {
         info!(
             &ctx,
-            "TCP {:i}:{} <== {:i}:{}",
+            "TCP {:i}:{} <== {:i}:{} size {}",
             host_addr.to_bits(),
             host_port,
             remote_addr.to_bits(),
             remote_port,
+            ctx.data_end() - ctx.data()
         );
         // let pk_len = (ctx.data_end() - ctx.data() - PROTOCAL_OFFSET) as u32;
         // let thl = (header.doff() * 4) as u32;
