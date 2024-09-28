@@ -21,9 +21,9 @@ use simple_firewall_common::{Connection, TCPState};
 use crate::{helper::*, CONNECTIONS, NEW, TEMPORT};
 
 struct SynCookie {
-    _pad: u16,
-    pub mss: u16,
     pub seq: u32,
+    pub mss: u16,
+    _pad: u16,
 }
 
 // TCP Struct
