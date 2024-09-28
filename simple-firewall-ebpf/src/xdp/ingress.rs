@@ -20,6 +20,12 @@ use simple_firewall_common::{Connection, TCPState};
 
 use crate::{helper::*, CONNECTIONS, NEW, TEMPORT};
 
+struct SynCookie {
+    _pad: u16,
+    pub mss: u16,
+    pub seq: u32,
+}
+
 // TCP Struct
 // Doff = 4bit int represent how many 32Bit Word of TCP header length
 // TOTAL TCP HEADER LENGTH = Doff * 4 min=20 max=60
@@ -178,13 +184,14 @@ pub fn handle_tcp_xdp(
         // };
 
         //Create cookie before changing header
-        let cookie = unsafe {
+        let raw_cookie = unsafe {
             bpf_tcp_raw_gen_syncookie_ipv4(
                 ipv as *mut _,
                 header_mut as *mut _,
                 TcpHdr::LEN as u32,
             )
-        } as usize;
+        } as u64;
+        let cookie = unsafe { mem::transmute::<u64, SynCookie>(raw_cookie) };
         let ethdr: *mut EthHdr = unsafe { ptr_at_mut(&ctx, 0)? };
         unsafe {
             mem::swap(&mut (*ethdr).src_addr, &mut (*ethdr).dst_addr);
@@ -226,9 +233,7 @@ pub fn handle_tcp_xdp(
                     (u32::from_be((*header_mut).seq) + 1).to_be();
             }
 
-            let seq_cookie = (cookie + 4usize) as u32;
-            let mss_cookie = (cookie + 2usize) as u16;
-            info!(&ctx, "Cookie seq: {}, mss {}", seq_cookie, mss_cookie);
+            info!(&ctx, "Cookie seq: {}, mss {}", cookie.seq, cookie.mss);
             if header.doff() > 5 {
                 //recalc the checksum
                 let mut option_offset =
@@ -262,11 +267,11 @@ pub fn handle_tcp_xdp(
                             ptr_at_mut(&ctx, option_offset + 1usize)?;
                         if let Some(check) = csum_diff(
                             &(*mss),
-                            &mss_cookie.to_be(),
+                            &cookie.mss.to_be(),
                             !((*header_mut).check as u32),
                         ) {
                             (*header_mut).check = csum_fold(check);
-                            *mss = mss_cookie.to_be();
+                            *mss = cookie.mss.to_be();
                         }
                     }
                     if option_type != 8 {
@@ -307,18 +312,18 @@ pub fn handle_tcp_xdp(
             }
             if let Some(check) = csum_diff(
                 &header.seq,
-                &seq_cookie.to_be(),
+                &cookie.seq.to_be(),
                 !((*header_mut).check as u32),
             ) {
                 (*header_mut).check = csum_fold(check);
-                (*header_mut).seq = seq_cookie.to_be();
+                (*header_mut).seq = cookie.seq.to_be();
             }
             info!(
                 &ctx,
                 "XDP::TX TCP to {:i}:{} cookies {}",
                 remote_addr.to_bits(),
                 remote_port,
-                seq_cookie,
+                cookie.seq,
             );
         }
         Ok(xdp_action::XDP_TX)
