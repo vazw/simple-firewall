@@ -191,7 +191,7 @@ pub fn handle_tcp_xdp(
             bpf_tcp_raw_gen_syncookie_ipv4(
                 ipv as *mut _,
                 header_mut as *mut _,
-                TcpHdr::LEN as u32,
+                (header.doff() * 4) as u32,
             )
         } as i64;
         // On failure, the returned value is one of the following:
