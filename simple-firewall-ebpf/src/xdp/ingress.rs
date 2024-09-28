@@ -1,7 +1,7 @@
 use aya_ebpf::{
     bindings::xdp_action,
     helpers::{
-        bpf_csum_diff, bpf_tcp_raw_check_syncookie_ipv4,
+        bpf_csum_diff, bpf_ktime_get_ns, bpf_tcp_raw_check_syncookie_ipv4,
         bpf_tcp_raw_gen_syncookie_ipv4,
     },
     programs::XdpContext,
@@ -177,6 +177,14 @@ pub fn handle_tcp_xdp(
         // } else {
         // };
 
+        //Create cookie before changing header
+        let cookie = unsafe {
+            bpf_tcp_raw_gen_syncookie_ipv4(
+                ipv as *mut _,
+                header_mut as *mut _,
+                TcpHdr::LEN as u32,
+            )
+        } as usize;
         let ethdr: *mut EthHdr = unsafe { ptr_at_mut(&ctx, 0)? };
         unsafe {
             mem::swap(&mut (*ethdr).src_addr, &mut (*ethdr).dst_addr);
@@ -217,25 +225,91 @@ pub fn handle_tcp_xdp(
                 (*header_mut).ack_seq =
                     (u32::from_be((*header_mut).seq) + 1).to_be();
             }
-            let cookie = bpf_tcp_raw_gen_syncookie_ipv4(
-                ipv as *mut _,
-                header_mut as *mut _,
-                TcpHdr::LEN as u32,
-            ) as u32;
+            let mss_cookie = (cookie + 2usize) as u16;
+            if header.doff() > 5 {
+                //recalc the checksum
+                let mut option_offset =
+                    EthHdr::LEN + Ipv4Hdr::LEN + TcpHdr::LEN;
+                for _ in 0..100 {
+                    if option_offset as u16 >= { *ipv }.tot_len {
+                        break;
+                    }
+                    if ptr_at_mut::<*mut u8>(&ctx, option_offset).is_err() {
+                        break;
+                    }
+                    let option_type_pointer: *mut u8 =
+                        ptr_at_mut(&ctx, option_offset)?;
+                    let option_type = u8::from_be(*option_type_pointer);
+                    if option_type == 0 {
+                        break;
+                    }
+                    if option_type == 1 {
+                        option_offset += 1;
+                        continue;
+                    }
+                    if ptr_at_mut::<*mut u8>(&ctx, option_offset + 1).is_err() {
+                        break;
+                    }
+                    let option_len_pointer: *mut u8 =
+                        ptr_at_mut(&ctx, option_offset + 1)?;
+                    let option_len = u8::from_be(*option_len_pointer);
+                    info!(&ctx, "{} {}", option_type, option_len);
+                    if option_type == 2 {
+                        let mss: *mut u16 =
+                            ptr_at_mut(&ctx, option_offset + 1usize)?;
+                        if let Some(check) = csum_diff(
+                            &(*mss),
+                            &mss_cookie.to_be(),
+                            !((*header_mut).check as u32),
+                        ) {
+                            (*header_mut).check = csum_fold(check);
+                            *mss = mss_cookie.to_be();
+                        }
+                    }
+                    if option_type != 8 {
+                        option_offset += option_len as usize;
+                        continue;
+                    }
+
+                    let option_data_timestamp_pointer: *mut u32 =
+                        ptr_at_mut(&ctx, option_offset + 2_usize)?;
+
+                    let option_data_timestamp_echo_pointer: *mut u32 =
+                        ptr_at_mut(&ctx, option_offset + 6_usize)?;
+
+                    if let Some(check) = csum_diff(
+                        &(*option_data_timestamp_echo_pointer),
+                        &(*option_data_timestamp_pointer),
+                        !((*header_mut).check as u32),
+                    ) {
+                        (*header_mut).check = csum_fold(check);
+                        *option_data_timestamp_echo_pointer =
+                            *option_data_timestamp_pointer;
+                    }
+
+                    (*option_data_timestamp_pointer) =
+                        (bpf_ktime_get_ns() >> 32) as u32;
+                    //dont use system time, set it to random lol
+
+                    option_offset += option_len as usize;
+                    break;
+                }
+            }
+            let seq_cookie = (cookie + 4usize) as u32;
             if let Some(check) = csum_diff(
                 &header.seq,
-                &cookie.to_be(),
+                &seq_cookie.to_be(),
                 !((*header_mut).check as u32),
             ) {
                 (*header_mut).check = csum_fold(check);
-                (*header_mut).seq = cookie.to_be();
+                (*header_mut).seq = seq_cookie.to_be();
             }
             info!(
                 &ctx,
                 "XDP::TX TCP to {:i}:{} cookies {}",
                 remote_addr.to_bits(),
                 remote_port,
-                cookie,
+                seq_cookie,
             );
         }
         Ok(xdp_action::XDP_TX)

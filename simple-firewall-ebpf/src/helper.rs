@@ -64,8 +64,8 @@ pub unsafe fn tc_ptr_at<T>(ctx: &TcContext, offset: usize) -> Result<&T, i32> {
 #[inline(always)]
 pub fn csum_diff<T, U>(src: &T, dst: &U, seed: u32) -> Option<u32>
 where
-    Assert<{ size_of::<T>() % 4 == 0 }>: IsTrue,
-    Assert<{ size_of::<U>() % 4 == 0 }>: IsTrue,
+    Assert<{ size_of::<T>() * 8 % 4 == 0 }>: IsTrue,
+    Assert<{ size_of::<U>() * 8 % 4 == 0 }>: IsTrue,
 {
     let src = src as *const _ as *mut u32;
     let dst = dst as *const _ as *mut u32;
