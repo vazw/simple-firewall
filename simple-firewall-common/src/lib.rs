@@ -1,5 +1,18 @@
 #![no_std]
 
+#[derive(Debug)]
+pub struct SynCookie {
+    _pad: u16,
+    pub mss: u16,
+    pub seq: u32,
+}
+
+impl SynCookie {
+    pub fn new(seq: u32, mss: u16) -> Self {
+        Self { _pad: 0, seq, mss }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Connection {
     pub host_addr: u32,

@@ -16,15 +16,9 @@ use network_types::{
     tcp::TcpHdr,
     udp::UdpHdr,
 };
-use simple_firewall_common::{Connection, TCPState};
+use simple_firewall_common::{Connection, SynCookie, TCPState};
 
 use crate::{helper::*, CONNECTIONS, NEW, TEMPORT};
-
-struct SynCookie {
-    pub seq: u32,
-    pub mss: u16,
-    _pad: u16,
-}
 
 // TCP Struct
 // Doff = 4bit int represent how many 32Bit Word of TCP header length
@@ -123,16 +117,25 @@ pub fn handle_tcp_xdp(
             Ok(xdp_action::XDP_PASS)
         }
     } else if 16u8.eq(&tcp_flag) {
-        let cookie = (u32::from_be(header.ack_seq) - 1) as i64;
         let check = unsafe {
+            // 0 if iph and th are a valid SYN cookie ACK.
+            // On failure -EACCES if th_len is invalid.
+            // (OS error: 13 permission denied)
             bpf_tcp_raw_check_syncookie_ipv4(
                 ipv as *mut _,
                 header_mut as *mut _,
-            ) as u32
+            ) as i64
         };
+        let cookie = if check != -13 {
+            check
+        } else {
+            ((u32::from_be(header.ack_seq) - 1) as u32
+                - connection.into_session() as u32) as i64
+        };
+
         info!(&ctx, "cookies {} check {}", cookie, check);
 
-        if 0 < (check as i64 - cookie) && (check as i64 - cookie) < 10 {
+        if 0i64.eq(&cookie) {
             info!(
                 &ctx,
                 "Correct cookies on TCP from {:i}:{} creating connection",
@@ -190,8 +193,18 @@ pub fn handle_tcp_xdp(
                 header_mut as *mut _,
                 TcpHdr::LEN as u32,
             )
-        } as u64;
-        let cookie = unsafe { mem::transmute::<u64, SynCookie>(raw_cookie) };
+        } as i64;
+        // On failure, the returned value is one of the following:
+        // -EINVAL if th_len is invalid. (OS error: 22)
+        let cookie = if raw_cookie != -22 {
+            unsafe { mem::transmute::<i64, SynCookie>(raw_cookie) }
+        } else {
+            SynCookie::new(connection.into_session(), 1460)
+        };
+        info!(
+            &ctx,
+            "gen cookie got {} -> {}::{}", raw_cookie, cookie.seq, cookie.mss
+        );
         let ethdr: *mut EthHdr = unsafe { ptr_at_mut(&ctx, 0)? };
         unsafe {
             mem::swap(&mut (*ethdr).src_addr, &mut (*ethdr).dst_addr);
@@ -295,7 +308,7 @@ pub fn handle_tcp_xdp(
                             *option_data_timestamp_pointer;
                     }
 
-                    let tsval = (bpf_ktime_get_ns() >> 32) as u32;
+                    let tsval = (bpf_ktime_get_ns() >> 16) as u32;
                     if let Some(check) = csum_diff(
                         &(*option_data_timestamp_echo_pointer),
                         &tsval.to_be(),
@@ -304,7 +317,6 @@ pub fn handle_tcp_xdp(
                         (*header_mut).check = csum_fold(check);
                         (*option_data_timestamp_pointer) = tsval.to_be();
                     }
-                    //dont use system time, set it to random lol
 
                     option_offset += option_len as usize;
                     break;
