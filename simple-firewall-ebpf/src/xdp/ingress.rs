@@ -225,7 +225,10 @@ pub fn handle_tcp_xdp(
                 (*header_mut).ack_seq =
                     (u32::from_be((*header_mut).seq) + 1).to_be();
             }
+
+            let seq_cookie = (cookie + 4usize) as u32;
             let mss_cookie = (cookie + 2usize) as u16;
+            info!(&ctx, "Cookie seq: {}, mss {}", seq_cookie, mss_cookie);
             if header.doff() > 5 {
                 //recalc the checksum
                 let mut option_offset =
@@ -287,15 +290,21 @@ pub fn handle_tcp_xdp(
                             *option_data_timestamp_pointer;
                     }
 
-                    (*option_data_timestamp_pointer) =
-                        (bpf_ktime_get_ns() >> 32) as u32;
+                    let tsval = (bpf_ktime_get_ns() >> 32) as u32;
+                    if let Some(check) = csum_diff(
+                        &(*option_data_timestamp_echo_pointer),
+                        &tsval.to_be(),
+                        !((*header_mut).check as u32),
+                    ) {
+                        (*header_mut).check = csum_fold(check);
+                        (*option_data_timestamp_pointer) = tsval.to_be();
+                    }
                     //dont use system time, set it to random lol
 
                     option_offset += option_len as usize;
                     break;
                 }
             }
-            let seq_cookie = (cookie + 4usize) as u32;
             if let Some(check) = csum_diff(
                 &header.seq,
                 &seq_cookie.to_be(),
