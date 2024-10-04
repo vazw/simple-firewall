@@ -1,4 +1,0 @@
-{
-  "rust.target": "bpfel-unknown-none",
-  "rust.all_targets": false
-}

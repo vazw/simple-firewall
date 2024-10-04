@@ -1,0 +1,2 @@
+[rust-analyzer]
+linkedProjects = ["Cargo.toml", "simeple-firewall-ebpf/Cargo.toml"]

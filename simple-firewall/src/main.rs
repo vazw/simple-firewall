@@ -67,7 +67,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .build(
             Root::builder()
                 .appender("log_file")
-                .build(LevelFilter::Info),
+                .build(LevelFilter::Debug),
         )
         .unwrap();
 

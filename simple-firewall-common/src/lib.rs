@@ -1,6 +1,6 @@
 #![no_std]
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct SynCookie {
     _pad: u16,
     pub mss: u16,
@@ -12,6 +12,9 @@ impl SynCookie {
         Self { _pad: 0, seq, mss }
     }
 }
+
+#[cfg(feature = "user")]
+unsafe impl aya::Pod for SynCookie {}
 
 #[derive(Clone, Copy, Debug)]
 pub struct Connection {
