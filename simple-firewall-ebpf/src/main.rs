@@ -6,6 +6,7 @@
 mod helper;
 mod tc;
 mod xdp;
+use aya_log_ebpf::info;
 use helper::*;
 
 use aya_ebpf::{
@@ -95,6 +96,12 @@ fn try_simple_firewall(ctx: XdpContext) -> Result<u32, u32> {
                     || matches!(remote_addr.octets(), [.., 255]))
             // || remote_addr.is_private())
             {
+                info!(
+                    &ctx,
+                    "Broadcast PASS {} -> {}",
+                    remote_addr.to_bits(),
+                    host_addr.to_bits()
+                );
                 return Ok(xdp_action::XDP_PASS);
             }
             if matches!(host_addr.octets(), [.., 255])
@@ -103,11 +110,23 @@ fn try_simple_firewall(ctx: XdpContext) -> Result<u32, u32> {
                     || remote_addr.is_private())
             // || remote_addr.is_private())
             {
+                info!(
+                    &ctx,
+                    "Broadcast PASS {} -> {}",
+                    remote_addr.to_bits(),
+                    host_addr.to_bits()
+                );
                 return Ok(xdp_action::XDP_PASS);
             }
             if host_addr.is_multicast()
                 && (remote_addr.is_multicast() || remote_addr.is_private())
             {
+                info!(
+                    &ctx,
+                    "Mulicast PASS {} -> {}",
+                    remote_addr.to_bits(),
+                    host_addr.to_bits()
+                );
                 return Ok(xdp_action::XDP_PASS);
             }
             match protocal {
@@ -153,6 +172,43 @@ fn try_tc_egress(ctx: TcContext) -> Result<i32, i32> {
             let host_addr = ipv4hdr.src_addr();
             let remote_addr = ipv4hdr.dst_addr();
             let protocal = ipv4hdr.proto;
+            if host_addr.is_private()
+                && (remote_addr.is_multicast()
+                    || matches!(remote_addr.octets(), [.., 255]))
+            // || remote_addr.is_private())
+            {
+                info!(
+                    &ctx,
+                    "Broadcast PASS {} -> {}",
+                    remote_addr.to_bits(),
+                    host_addr.to_bits()
+                );
+                return Ok(TC_ACT_PIPE);
+            }
+            if matches!(host_addr.octets(), [.., 255])
+                && (remote_addr.is_multicast()
+                    || matches!(remote_addr.octets(), [.., 255])
+                    || remote_addr.is_private())
+            {
+                info!(
+                    &ctx,
+                    "Broadcast PASS {} -> {}",
+                    remote_addr.to_bits(),
+                    host_addr.to_bits()
+                );
+                return Ok(TC_ACT_PIPE);
+            }
+            if host_addr.is_multicast()
+                && (remote_addr.is_multicast() || remote_addr.is_private())
+            {
+                info!(
+                    &ctx,
+                    "Mulicast PASS {} -> {}",
+                    remote_addr.to_bits(),
+                    host_addr.to_bits()
+                );
+                return Ok(TC_ACT_PIPE);
+            }
             match ipv4hdr.proto {
                 IpProto::Icmp => {
                     handle_icmp_egress(ctx, host_addr, remote_addr, protocal)
