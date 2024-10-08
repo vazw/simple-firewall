@@ -311,7 +311,7 @@ pub fn handle_tcp_xdp(
 
                     let tsval = (bpf_ktime_get_ns() >> 16) as u32;
                     if let Some(check) = csum_diff(
-                        &(*option_data_timestamp_echo_pointer),
+                        &(*option_data_timestamp_pointer),
                         &tsval.to_be(),
                         !((*header_mut).check as u32),
                     ) {
