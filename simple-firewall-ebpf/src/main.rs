@@ -98,7 +98,7 @@ fn try_simple_firewall(ctx: XdpContext) -> Result<u32, u32> {
             {
                 info!(
                     &ctx,
-                    "Broadcast PASS {} -> {}",
+                    "INGRESS Broadcast PASS {:i} -> {:i}",
                     remote_addr.to_bits(),
                     host_addr.to_bits()
                 );
@@ -112,7 +112,7 @@ fn try_simple_firewall(ctx: XdpContext) -> Result<u32, u32> {
             {
                 info!(
                     &ctx,
-                    "Broadcast PASS {} -> {}",
+                    "INGRESS Broadcast PASS {:i} -> {:i}",
                     remote_addr.to_bits(),
                     host_addr.to_bits()
                 );
@@ -123,7 +123,7 @@ fn try_simple_firewall(ctx: XdpContext) -> Result<u32, u32> {
             {
                 info!(
                     &ctx,
-                    "Mulicast PASS {} -> {}",
+                    "INGRESS Mulicast PASS {:i} -> {:i}",
                     remote_addr.to_bits(),
                     host_addr.to_bits()
                 );
@@ -179,7 +179,7 @@ fn try_tc_egress(ctx: TcContext) -> Result<i32, i32> {
             {
                 info!(
                     &ctx,
-                    "Broadcast PASS {} -> {}",
+                    "EGRESS Broadcast PASS {:i} -> {:i}",
                     remote_addr.to_bits(),
                     host_addr.to_bits()
                 );
@@ -192,7 +192,7 @@ fn try_tc_egress(ctx: TcContext) -> Result<i32, i32> {
             {
                 info!(
                     &ctx,
-                    "Broadcast PASS {} -> {}",
+                    "EGRESS Broadcast PASS {:i} -> {:i}",
                     remote_addr.to_bits(),
                     host_addr.to_bits()
                 );
@@ -203,7 +203,7 @@ fn try_tc_egress(ctx: TcContext) -> Result<i32, i32> {
             {
                 info!(
                     &ctx,
-                    "Mulicast PASS {} -> {}",
+                    "EGRESS Mulicast PASS {:i} -> {:i}",
                     remote_addr.to_bits(),
                     host_addr.to_bits()
                 );
