@@ -28,7 +28,7 @@ use crate::tc::egress::{
 use crate::xdp::ingress::{handle_icmp_xdp, handle_tcp_xdp, handle_udp_xdp};
 
 //UP TO 100 in config length
-const CONFIG_MAP_SIZE: u32 = 100;
+const CONFIG_MAP_SIZE: u32 = 65536;
 
 // This should be enough for all port on a system
 #[map(name = "CONNECTIONS")]
@@ -91,39 +91,13 @@ fn try_simple_firewall(ctx: XdpContext) -> Result<u32, u32> {
             let protocal = ipv.proto;
             // Won't mess with DNS, mulicast and Broadcast
             // Let local broadcast and multicast pass
-            if host_addr.is_private()
-                && (remote_addr.is_multicast()
-                    || matches!(remote_addr.octets(), [.., 255]))
-            // || remote_addr.is_private())
+            if host_addr.is_multicast() || ethhdr.dst_addr.eq(&[255,255,255,255,255,255])
+                || matches!(host_addr.octets(), [.., 255])
+                || (remote_addr.is_multicast() || matches!(remote_addr.octets(), [.., 255]))
             {
                 info!(
                     &ctx,
                     "INGRESS Broadcast PASS {:i} -> {:i}",
-                    remote_addr.to_bits(),
-                    host_addr.to_bits()
-                );
-                return Ok(xdp_action::XDP_PASS);
-            }
-            if matches!(host_addr.octets(), [.., 255])
-                && (remote_addr.is_multicast()
-                    || matches!(remote_addr.octets(), [.., 255])
-                    || remote_addr.is_private())
-            // || remote_addr.is_private())
-            {
-                info!(
-                    &ctx,
-                    "INGRESS Broadcast PASS {:i} -> {:i}",
-                    remote_addr.to_bits(),
-                    host_addr.to_bits()
-                );
-                return Ok(xdp_action::XDP_PASS);
-            }
-            if host_addr.is_multicast()
-                && (remote_addr.is_multicast() || remote_addr.is_private())
-            {
-                info!(
-                    &ctx,
-                    "INGRESS Mulicast PASS {:i} -> {:i}",
                     remote_addr.to_bits(),
                     host_addr.to_bits()
                 );
@@ -138,7 +112,6 @@ fn try_simple_firewall(ctx: XdpContext) -> Result<u32, u32> {
                 }
                 IpProto::Gre => {
                     // let header = ptr_at(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?;
-
                     aya_log_ebpf::debug!(&ctx, "GRE tunnelling🥰");
                     Ok(xdp_action::XDP_PASS)
                 }
@@ -172,38 +145,13 @@ fn try_tc_egress(ctx: TcContext) -> Result<i32, i32> {
             let host_addr = ipv4hdr.src_addr();
             let remote_addr = ipv4hdr.dst_addr();
             let protocal = ipv4hdr.proto;
-            if host_addr.is_private()
-                && (remote_addr.is_multicast()
-                    || matches!(remote_addr.octets(), [.., 255]))
-            // || remote_addr.is_private())
+            if host_addr.is_multicast() || eth_hdr.dst_addr.eq(&[255,255,255,255,255,255])
+                || matches!(host_addr.octets(), [.., 255])
+                || (remote_addr.is_multicast() || matches!(remote_addr.octets(), [.., 255]))
             {
                 info!(
                     &ctx,
                     "EGRESS Broadcast PASS {:i} -> {:i}",
-                    remote_addr.to_bits(),
-                    host_addr.to_bits()
-                );
-                return Ok(TC_ACT_PIPE);
-            }
-            if matches!(host_addr.octets(), [.., 255])
-                && (remote_addr.is_multicast()
-                    || matches!(remote_addr.octets(), [.., 255])
-                    || remote_addr.is_private())
-            {
-                info!(
-                    &ctx,
-                    "EGRESS Broadcast PASS {:i} -> {:i}",
-                    remote_addr.to_bits(),
-                    host_addr.to_bits()
-                );
-                return Ok(TC_ACT_PIPE);
-            }
-            if host_addr.is_multicast()
-                && (remote_addr.is_multicast() || remote_addr.is_private())
-            {
-                info!(
-                    &ctx,
-                    "EGRESS Mulicast PASS {:i} -> {:i}",
                     remote_addr.to_bits(),
                     host_addr.to_bits()
                 );

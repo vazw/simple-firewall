@@ -1,5 +1,5 @@
 use aya::maps::HashMap;
-use aya::Bpf;
+use aya::Ebpf;
 use clap::Parser;
 use log::info;
 use serde::Deserialize;
@@ -8,25 +8,25 @@ use std::net::Ipv4Addr;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct TcpIn {
-    pub sport: Option<Vec<u16>>,
-    pub dport: Option<Vec<u16>>,
+    pub sport: Option<Vec<String>>,
+    pub dport: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct TcpOut {
-    pub sport: Option<Vec<u16>>,
-    pub dport: Option<Vec<u16>>,
+    pub sport: Option<Vec<String>>,
+    pub dport: Option<Vec<String>>,
 }
 #[derive(Debug, Clone, Deserialize)]
 pub struct UdpIn {
-    pub sport: Option<Vec<u16>>,
-    pub dport: Option<Vec<u16>>,
+    pub sport: Option<Vec<String>>,
+    pub dport: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct UdpOut {
-    pub sport: Option<Vec<u16>>,
-    pub dport: Option<Vec<u16>>,
+    pub sport: Option<Vec<String>>,
+    pub dport: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -92,7 +92,7 @@ pub struct Opt {
 }
 
 pub fn load_config(
-    bpf: &mut Bpf,
+    bpf: &mut Ebpf,
     config: &AppConfig,
 ) -> Result<(), anyhow::Error> {
     if let Some(dns) = &config.dns {
@@ -112,9 +112,21 @@ pub fn load_config(
             for port in 0..=65535 {
                 _ = tcp_in_port.remove(&port);
             }
-            for port in n {
-                info!("Allow incomming from tcp port: {:?}", port);
-                tcp_in_port.insert(port, 1u8, 0)?;
+            for r in n {
+                if r.contains('-') {
+                    let range: Vec<u16> = r
+                        .split("-")
+                        .map(|x| x.parse().expect("port number"))
+                        .collect();
+                    for port in range[0]..=range[1] {
+                        info!("Allow incomming from tcp port: {:?}", port);
+                        tcp_in_port.insert(port, 1u8, 0)?;
+                    }
+                } else {
+                    let port = r.parse::<u16>().expect("port number");
+                    info!("Allow incomming from tcp port: {:?}", port);
+                    tcp_in_port.insert(port, 1u8, 0)?;
+                }
             }
         }
         if let Some(n) = &tcp.dport {
@@ -123,9 +135,21 @@ pub fn load_config(
             for port in 0..=65535 {
                 _ = tcp_in_port.remove(&port);
             }
-            for port in n {
-                info!("Allow incomming to tcp port: {:?}", port);
-                tcp_in_port.insert(port, 1u8, 0)?;
+            for r in n {
+                if r.contains('-') {
+                    let range: Vec<u16> = r
+                        .split("-")
+                        .map(|x| x.parse().expect("port number"))
+                        .collect();
+                    for port in range[0]..=range[1] {
+                        info!("Allow incomming to tcp port: {:?}", port);
+                        tcp_in_port.insert(port, 1u8, 0)?;
+                    }
+                } else {
+                    let port = r.parse::<u16>().expect("port number");
+                    info!("Allow incomming to tcp port: {:?}", port);
+                    tcp_in_port.insert(port, 1u8, 0)?;
+                }
             }
         }
     }
@@ -136,9 +160,21 @@ pub fn load_config(
             for port in 0..=65535 {
                 _ = tcp_out_port.remove(&port);
             }
-            for port in n {
-                info!("Allow outgoing from tcp port: {:?}", port);
-                tcp_out_port.insert(port, 1u8, 0)?;
+            for r in n {
+                if r.contains('-') {
+                    let range: Vec<u16> = r
+                        .split("-")
+                        .map(|x| x.parse().expect("port number"))
+                        .collect();
+                    for port in range[0]..=range[1] {
+                        info!("Allow outgoing from tcp port: {:?}", port);
+                        tcp_out_port.insert(port, 1u8, 0)?;
+                    }
+                } else {
+                    let port = r.parse::<u16>().expect("port number");
+                    info!("Allow outgoing from tcp port: {:?}", port);
+                    tcp_out_port.insert(port, 1u8, 0)?;
+                }
             }
         }
         if let Some(n) = &tcp.dport {
@@ -147,9 +183,21 @@ pub fn load_config(
             for port in 0..=65535 {
                 _ = tcp_out_port.remove(&port);
             }
-            for port in n {
-                info!("Allow outgoing to tcp port: {:?}", port);
-                tcp_out_port.insert(port, 1u8, 0)?;
+            for r in n {
+                if r.contains('-') {
+                    let range: Vec<u16> = r
+                        .split("-")
+                        .map(|x| x.parse().expect("port number"))
+                        .collect();
+                    for port in range[0]..=range[1] {
+                        info!("Allow outgoing to tcp port: {:?}", port);
+                        tcp_out_port.insert(port, 1u8, 0)?;
+                    }
+                } else {
+                    let port = r.parse::<u16>().expect("port number");
+                    info!("Allow outgoing to tcp port: {:?}", port);
+                    tcp_out_port.insert(port, 1u8, 0)?;
+                }
             }
         }
     }
@@ -160,9 +208,21 @@ pub fn load_config(
             for port in 0..=65535 {
                 _ = udp_in_port.remove(&port);
             }
-            for port in n {
-                info!("Allow incomming from udp port {:?}", port);
-                udp_in_port.insert(port, 1u8, 0)?;
+            for r in n {
+                if r.contains('-') {
+                    let range: Vec<u16> = r
+                        .split("-")
+                        .map(|x| x.parse().expect("port number"))
+                        .collect();
+                    for port in range[0]..=range[1] {
+                        info!("Allow incomming from udp port {:?}", port);
+                        udp_in_port.insert(port, 1u8, 0)?;
+                    }
+                } else {
+                    let port = r.parse::<u16>().expect("port number");
+                    info!("Allow incomming from udp port {:?}", port);
+                    udp_in_port.insert(port, 1u8, 0)?;
+                }
             }
         }
         if let Some(n) = &udp.dport {
@@ -171,9 +231,21 @@ pub fn load_config(
             for port in 0..=65535 {
                 _ = udp_in_port.remove(&port);
             }
-            for port in n {
-                info!("Allow incomming to udp port {:?}", port);
-                udp_in_port.insert(port, 1u8, 0)?;
+            for r in n {
+                if r.contains('-') {
+                    let range: Vec<u16> = r
+                        .split("-")
+                        .map(|x| x.parse().expect("port number"))
+                        .collect();
+                    for port in range[0]..=range[1] {
+                        info!("Allow incomming to udp port {:?}", port);
+                        udp_in_port.insert(port, 1u8, 0)?;
+                    }
+                } else {
+                    let port = r.parse::<u16>().expect("port number");
+                    info!("Allow incomming to udp port {:?}", port);
+                    udp_in_port.insert(port, 1u8, 0)?;
+                }
             }
         }
     }
@@ -184,9 +256,21 @@ pub fn load_config(
             for port in 0..=65535 {
                 _ = udp_out_port.remove(&port);
             }
-            for port in n {
-                info!("Allow outgoing from udp port {:?}", port);
-                udp_out_port.insert(port, 1u8, 0)?;
+            for r in n {
+                if r.contains('-') {
+                    let range: Vec<u16> = r
+                        .split("-")
+                        .map(|x| x.parse().expect("port number"))
+                        .collect();
+                    for port in range[0]..=range[1] {
+                        info!("Allow outgoing from udp port {:?}", port);
+                        udp_out_port.insert(port, 1u8, 0)?;
+                    }
+                } else {
+                    let port = r.parse::<u16>().expect("port number");
+                    info!("Allow outgoing from udp port {:?}", port);
+                    udp_out_port.insert(port, 1u8, 0)?;
+                }
             }
         }
         if let Some(n) = &udp.dport {
@@ -195,9 +279,21 @@ pub fn load_config(
             for port in 0..=65535 {
                 _ = udp_out_port.remove(&port);
             }
-            for port in n {
-                info!("Allow outgoing to udp port {:?}", port);
-                udp_out_port.insert(port, 1u8, 0)?;
+            for r in n {
+                if r.contains('-') {
+                    let range: Vec<u16> = r
+                        .split("-")
+                        .map(|x| x.parse().expect("port number"))
+                        .collect();
+                    for port in range[0]..=range[1] {
+                        info!("Allow outgoing from udp port {:?}", port);
+                        udp_out_port.insert(port, 1u8, 0)?;
+                    }
+                } else {
+                    let port = r.parse::<u16>().expect("port number");
+                    info!("Allow outgoing from udp port {:?}", port);
+                    udp_out_port.insert(port, 1u8, 0)?;
+                }
             }
         }
     }

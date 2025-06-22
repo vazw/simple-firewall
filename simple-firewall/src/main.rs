@@ -9,8 +9,8 @@ use helper::*;
 use anyhow::Ok;
 use aya::maps::{HashMap, RingBuf};
 use aya::programs::{tc, SchedClassifier, TcAttachType, Xdp, XdpFlags};
-use aya::{include_bytes_aligned, Bpf};
-use aya_log::BpfLogger;
+use aya::{include_bytes_aligned, Ebpf};
+use aya_log::EbpfLogger;
 use clap::Parser;
 use figment::{
     providers::{Format, Toml},
@@ -87,16 +87,16 @@ async fn main() -> Result<(), anyhow::Error> {
     // This will include your eBPF object file as raw bytes at compile-time and load it at
     // runtime. This approach is recommended for most real-world use cases. If you would
     // like to specify the eBPF program at runtime rather than at compile-time, you can
-    // reach for `Bpf::load_file` instead.
+    // reach for `Ebpf::load_file` instead.
     #[cfg(debug_assertions)]
-    let mut bpf = Bpf::load(include_bytes_aligned!(
+    let mut bpf = Ebpf::load(include_bytes_aligned!(
         "../../target/bpfel-unknown-none/debug/sfw"
     ))?;
     #[cfg(not(debug_assertions))]
-    let mut bpf = Bpf::load(include_bytes_aligned!(
+    let mut bpf = Ebpf::load(include_bytes_aligned!(
         "../../target/bpfel-unknown-none/release/sfw"
     ))?;
-    if let Err(e) = BpfLogger::init(&mut bpf) {
+    if let Err(e) = EbpfLogger::init(&mut bpf) {
         // This can happen if you remove all log statements from your eBPF program.
         warn!("failed to initialize eBPF logger: {}", e);
     }
@@ -111,18 +111,22 @@ async fn main() -> Result<(), anyhow::Error> {
     let xdp_link = {
         let link = program.attach(&opt.iface, XdpFlags::HW_MODE);
         if link.is_ok() {
+            println!("Hardware Mode");
             link.unwrap()
         } else {
             let link = program.attach(&opt.iface, XdpFlags::DRV_MODE);
             if link.is_ok() {
+                println!("Driver Mode");
                 link.unwrap()
             } else {
                 let link = program.attach(&opt.iface, XdpFlags::default());
                 if link.is_ok() {
+                    println!("{:?} Mode", XdpFlags::default());
                     link.unwrap()
                 } else {
                     let link = program.attach(&opt.iface, XdpFlags::SKB_MODE);
                     if link.is_ok() {
+                        println!("SKB Mode");
                         link.unwrap()
                     } else {
                         return Ok(());
@@ -176,18 +180,22 @@ async fn main() -> Result<(), anyhow::Error> {
                 _ = async_fd.readable_mut() => {
                     let mut guard = async_fd.readable_mut().await.unwrap();
                     let rb = guard.get_inner_mut();
+                    let mut last_check:u32 = 0;
 
                     while let Some(read) = rb.next() {
                         let data = read.as_ptr();
                         let contrack = unsafe { std::ptr::read_unaligned::<Connection>(data as *const Connection) };
                         let idx = contrack.into_session();
-                        if let Some(timer) = connection_timer.get_mut(&idx) {
-                            *timer = Instant::now();
-                        } else {
-                            connection_timer.insert(idx, Instant::now());
-                            debug!("New timmer added for : {}", Ipv4Addr::from_bits(idx).to_string())
+                        if !idx.eq(&last_check) {
+                            last_check = idx;
+                            if let Some(timer) = connection_timer.get_mut(&idx) {
+                                *timer = Instant::now();
+                                debug!("Updated timmer for : {}", Ipv4Addr::from_bits(idx).to_string())
+                            } else {
+                                connection_timer.insert(idx, Instant::now());
+                                debug!("New timmer added for : {}", Ipv4Addr::from_bits(idx).to_string())
+                            }
                         }
-
                     }
                     guard.clear_ready();
 

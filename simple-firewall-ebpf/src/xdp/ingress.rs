@@ -70,6 +70,9 @@ pub fn handle_tcp_xdp(
     let sums_key = connection.into_session();
     let header_mut: *mut TcpHdr = unsafe { ptr_at_mut(&ctx, PROTOCAL_OFFSET)? };
     if let Some(connection_state) = CONNECTIONS.get_ptr_mut(&sums_key) {
+        if unsafe{ bpf_ktime_get_ns()  - (*connection_state).last_syn_ack_time } > 10_000_000_000 {
+            _ = NEW.output(&connection, 0);
+        }
         let transitioned = unsafe {
             process_tcp_state_transition(
                 true,
@@ -378,7 +381,12 @@ pub fn handle_udp_xdp(
         0,
     );
     let sum_key = connection.into_session();
-    if is_requested(&sum_key).is_ok() {
+    if let Ok(connection_state) = is_requested(&sum_key) {
+        let current_time = unsafe{ bpf_ktime_get_ns() };
+        if current_time - unsafe{*connection_state}.last_syn_ack_time  > 10_000_000_000 {
+            unsafe { (*connection_state).last_syn_ack_time  = current_time};
+            _ = NEW.output(&connection, 0);
+        }
         aya_log_ebpf::debug!(
             &ctx,
             "UDP ESTABLISHED on {:i}:{}",
