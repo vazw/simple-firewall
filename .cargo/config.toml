@@ -1,2 +1,6 @@
 [alias]
 sfw = "run --package cargo-sfw --"
+
+[target."cfg(all())"]
+runner="sudo -E"
+

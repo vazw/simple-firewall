@@ -22,7 +22,7 @@ pub struct Connection {
     pub remote_addr: u32,
     pub host_port: u16,
     pub remote_port: u16,
-    pub protocal: u8,
+    pub protocol: u8,
     pub tcp_flag: u8,
     _padding: [u8; 2],
 }
@@ -36,7 +36,7 @@ pub struct ConnectionState {
     pub syn_ack_count: u32,
     pub remote_ip: u32,
     pub remote_port: u16,
-    pub protocal: u8,
+    pub protocol: u8,
     pub last_tcp_flag: u8,
     pub tcp_state: TCPState,
 }
@@ -71,7 +71,7 @@ impl Connection {
         host_port: u16,
         remote_addr: u32,
         remote_port: u16,
-        protocal: u8,
+        protocol: u8,
         tcp_flag: u8,
     ) -> Self {
         Connection {
@@ -79,7 +79,7 @@ impl Connection {
             remote_addr,
             host_port,
             remote_port,
-            protocal,
+            protocol,
             tcp_flag,
             _padding: [0u8; 2],
         }
@@ -94,7 +94,7 @@ impl Connection {
         host_port: u16,
         remote_addr: u32,
         remote_port: u16,
-        protocal: u8,
+        protocol: u8,
         tcp_flag: u8,
     ) -> Self {
         Connection {
@@ -102,7 +102,7 @@ impl Connection {
             remote_addr,
             host_port,
             remote_port,
-            protocal,
+            protocol,
             tcp_flag,
             _padding: [0u8; 2],
         }
@@ -120,7 +120,7 @@ impl Connection {
             syn_ack_count: 0,
             remote_ip: self.remote_addr,
             remote_port: self.remote_port,
-            protocal: self.protocal,
+            protocol: self.protocol,
             tcp_state: TCPState::SynSent,
             last_tcp_flag: self.tcp_flag,
         }
@@ -132,7 +132,7 @@ impl Connection {
             syn_ack_count: 0,
             remote_ip: self.remote_addr,
             remote_port: self.remote_port,
-            protocal: self.protocal,
+            protocol: self.protocol,
             tcp_state: TCPState::Listen,
             last_tcp_flag: self.tcp_flag,
         }
@@ -144,7 +144,7 @@ impl Connection {
             syn_ack_count: 0,
             remote_ip: self.remote_addr,
             remote_port: self.remote_port,
-            protocal: self.protocal,
+            protocol: self.protocol,
             tcp_state: TCPState::SynReceived,
             last_tcp_flag: self.tcp_flag,
         }

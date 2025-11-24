@@ -1,10 +1,9 @@
 use aya_ebpf::bindings::TC_ACT_PIPE;
-use aya_ebpf::helpers::bpf_csum_diff;
 use aya_ebpf::programs::TcContext;
 use aya_ebpf::{
     bindings::xdp_action, helpers::bpf_ktime_get_ns, programs::XdpContext,
 };
-use const_assert::{Assert, IsTrue};
+use network_types::tcp::TcpHdr;
 use network_types::{eth::EthHdr, ip::Ipv4Hdr};
 
 use core::mem;
@@ -20,6 +19,28 @@ pub const ICMP_ECHO_REPLY: u8 = 0;
 pub const ICMP_DEST_UNREACH: u8 = 3;
 pub const ICMP_ECHO_REQUEST: u8 = 8;
 pub const ICMP_TIME_EXCEEDED: u8 = 11;
+
+// pub const PROTOCAL_OFFSET_VLAN: usize = EthVlanHdrQ::LEN + Ipv4Hdr::LEN;
+pub const MAX_TCP_LEN: usize = 60; // 60 is max TCP header size
+pub const TCPOPT_NOP: u8 = 1;
+pub const TCPOPT_EOL: u8 = 0;
+pub const TCPOPT_MSS: u8 = 2;
+pub const TCPOPT_WINDOW: u8 = 3;
+pub const TCPOPT_SACK_PERM: u8 = 4;
+pub const TCPOPT_TIMESTAMP: u8 = 8;
+pub const TS_OPT_WSCALE_MASK: u32 = 0xf;
+pub const TS_OPT_SACK: u32 = 1 << 4;
+pub const TS_OPT_ECN: u32 = 1 << 5;
+pub const TSMASK: u32 = (1 << 6) - 1;
+pub const TCP_MAX_WSCALE: u8 = 14;
+pub const TCPOLEN_MSS: u8 = 4;
+pub const TCPOLEN_WINDOW: u8 = 3;
+pub const TCPOLEN_SACK_PERM: u8 = 2;
+pub const TCPOLEN_TIMESTAMP: u8 = 10;
+pub const DEFAULT_WSCALE: u8 = 7;
+pub const DEFAULT_TTL: u8 = 64;
+pub const ETH_P_8021Q: u16 = 0x8100; /* 802.1Q VLAN Extended Header  */
+pub const ETH_P_8021AD: u16 = 0x88A8; /* 802.1ad Service VLAN		*/
 
 #[inline(always)]
 pub unsafe fn ptr_at<T>(ctx: &XdpContext, offset: usize) -> Result<&T, u32> {
@@ -61,45 +82,20 @@ pub unsafe fn tc_ptr_at<T>(ctx: &TcContext, offset: usize) -> Result<&T, i32> {
     Ok(data_)
 }
 
-#[inline(always)]
-pub fn csum_diff<T, U>(src: &T, dst: &U, seed: u32) -> Option<u32>
-where
-    Assert<{ size_of::<T>() * 8 % 4 == 0 }>: IsTrue,
-    Assert<{ size_of::<U>() * 8 % 4 == 0 }>: IsTrue,
-{
-    let src = src as *const _ as *mut u32;
-    let dst = dst as *const _ as *mut u32;
-    match unsafe {
-        bpf_csum_diff(
-            src,
-            size_of::<T>() as u32,
-            dst,
-            size_of::<U>() as u32,
-            seed,
-        )
-    } {
-        csum @ 0.. => Some(csum as u32),
-        _ => None,
-    }
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TcpOptionsContext {
+    pub tsval: u32,
+    pub tsecr: u32,
+    pub wscale: u8,
+    pub sack_perm: bool,
 }
 
-#[inline(always)]
-pub fn csum_fold(mut csum: u32) -> u16 {
-    csum = (csum & 0xffff) + (csum >> 16);
-    csum = !((csum & 0xffff) + (csum >> 16));
-    csum as u16
+#[derive(Debug, Clone, Copy)]
+pub struct CookieResult {
+    pub mss: u16,
+    __pading: u16,
+    pub seq: u32,
 }
-
-#[inline(always)]
-pub fn csum_fold_helper(mut csum: u64) -> u16 {
-    for _i in 0..4 {
-        if (csum >> 16) > 0 {
-            csum = (csum & 0xffff) + (csum >> 16);
-        }
-    }
-    !(csum as u16)
-}
-
 // urg ack psh rst syn fin
 // U   A   P   R   S   F
 // 32  16  8   4   2   1
@@ -325,4 +321,173 @@ pub fn udp_dport_out(port: u16) -> bool {
 #[inline(always)]
 pub fn ip_addr_allowed(addrs: &u32) -> bool {
     unsafe { DNS_ADDR.get(addrs) }.is_some()
+}
+
+#[inline(always)]
+pub fn csum_fold(mut csum: u32) -> u16 {
+    csum = (csum & 0xffff) + (csum >> 16);
+    csum = (csum & 0xffff) + (csum >> 16);
+    !csum as u16
+}
+
+#[inline(always)]
+pub fn csum_fold_helper(mut sum: u64) -> u16 {
+    sum = (sum & 0xffffffff) + (sum >> 32);
+    sum = (sum & 0xffffffff) + (sum >> 32);
+    csum_fold(sum as u32)
+}
+
+#[inline(always)]
+pub fn csum_ipv4_magic(saddr: u32, daddr: u32, len: u16, proto: u8, csum: u64) -> u16 {
+    let mut sum: u64 = csum;
+
+    sum += saddr as u64;
+    sum += daddr as u64;
+
+    sum += (proto as u64) << 8;
+    sum += len as u64;
+
+    csum_fold_helper(sum)
+}
+
+#[inline(always)]
+pub fn time_get_ms() -> u32 {
+    (unsafe { bpf_ktime_get_ns() } / 1_000_000) as u32
+}
+
+#[inline(always)]
+pub fn timestamp_cookie(ctx: &XdpContext, tcp_hdr: &TcpHdr, offset: usize) -> TcpOptionsContext {
+    let mut options_off = offset;
+    let mut context = TcpOptionsContext {
+        tsval: time_get_ms() & !TSMASK,
+        wscale: DEFAULT_WSCALE,
+        ..Default::default()
+    };
+    for _ in 0..7 {
+        let Ok(option_kind) = (unsafe { ptr_at::<u8>(ctx, options_off) }) else {
+            break;
+        };
+        if *option_kind == TCPOPT_EOL {
+            break;
+        }
+        if *option_kind == TCPOPT_NOP {
+            options_off += 1;
+            continue;
+        }
+        let Ok(option_len) = (unsafe { ptr_at::<u8>(ctx, options_off + 1) }) else {
+            break;
+        };
+        if *option_len < 2 {
+            break;
+        };
+        match *option_kind {
+            TCPOPT_WINDOW => {
+                if *option_len == TCPOLEN_WINDOW {
+                    let Ok(wscale) = (unsafe { ptr_at::<u8>(ctx, options_off + 2) }) else {
+                        break;
+                    };
+                    context.wscale = if TCP_MAX_WSCALE > wscale.to_le() {
+                        *wscale
+                    } else {
+                        TCP_MAX_WSCALE
+                    };
+                }
+            }
+            TCPOPT_TIMESTAMP => {
+                if *option_len == TCPOLEN_TIMESTAMP {
+                    let Ok(tsecr) = (unsafe { ptr_at::<u32>(ctx, options_off + 2) }) else {
+                        break;
+                    };
+                    context.tsecr = *tsecr;
+                }
+            }
+            TCPOPT_SACK_PERM => {
+                if *option_len == TCPOLEN_SACK_PERM {
+                    context.sack_perm = true;
+                }
+            }
+            _ => {}
+        }
+        options_off += *option_len as usize;
+    }
+    context.tsval |= (context.wscale as u32) & TS_OPT_WSCALE_MASK;
+    if context.sack_perm {
+        context.tsval |= TS_OPT_SACK;
+    }
+    if tcp_hdr.ece() != 0 && tcp_hdr.cwr() != 0 {
+        context.tsval |= TS_OPT_ECN;
+    }
+    context.tsval = context.tsval.to_be();
+    context
+}
+
+/// # Safety
+/// need to grow buffer using bpf_adjust_tail() to length limit
+#[inline(always)]
+pub unsafe fn make_tcp_options(
+    ctx: &XdpContext,
+    start_offset: usize,
+    tsecr: u32,
+    tsval: u32,
+    wscale: u8,
+    mss: u16,
+) -> u16 {
+    let mut curent_offset = start_offset;
+    let mut doff = 0;
+    let Ok(data_ptr) = ptr_at_mut::<u32>(ctx, curent_offset) else {
+        return doff;
+    };
+
+    *data_ptr = ((TCPOPT_MSS as u32) << 24 | ((TCPOLEN_MSS as u32) << 16) | (mss as u32)).to_be();
+    curent_offset += mem::size_of::<u32>();
+    doff += 1;
+
+    if tsecr == 0 {
+        return doff;
+    }
+
+    let Ok(data_ptr) = ptr_at_mut::<u32>(ctx, curent_offset) else {
+        return doff;
+    };
+    if (tsval & (1u32 << 4).to_be()) != 0 {
+        *data_ptr = ((TCPOPT_SACK_PERM as u32) << 24
+            | (TCPOLEN_SACK_PERM as u32) << 16
+            | (TCPOPT_TIMESTAMP as u32) << 8
+            | TCPOLEN_TIMESTAMP as u32)
+            .to_be();
+    } else {
+        *data_ptr = ((TCPOPT_NOP as u32) << 24
+            | (TCPOPT_NOP as u32) << 16
+            | (TCPOPT_TIMESTAMP as u32) << 8
+            | TCPOLEN_TIMESTAMP as u32)
+            .to_be();
+    }
+    curent_offset += mem::size_of::<u32>();
+    doff += 1;
+
+    let Ok(data_ptr) = ptr_at_mut::<u32>(ctx, curent_offset) else {
+        return doff;
+    };
+    *data_ptr = tsval;
+    curent_offset += mem::size_of::<u32>();
+    doff += 1;
+    let Ok(data_ptr) = ptr_at_mut::<u32>(ctx, curent_offset) else {
+        return doff;
+    };
+    *data_ptr = tsecr;
+    curent_offset += mem::size_of::<u32>();
+    doff += 1;
+
+    let Ok(data_ptr) = ptr_at_mut::<u32>(ctx, curent_offset) else {
+        return doff;
+    };
+    if (tsval & 0xfu32.to_be()) != 0xfu32.to_be() {
+        *data_ptr = ((TCPOPT_NOP as u32) << 24
+            | (TCPOPT_WINDOW as u32) << 16
+            | (TCPOLEN_WINDOW as u32) << 8
+            | wscale as u32)
+            .to_be();
+        doff += 1;
+    }
+    doff
 }

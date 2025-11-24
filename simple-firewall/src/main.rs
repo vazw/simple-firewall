@@ -9,7 +9,7 @@ use helper::*;
 use anyhow::Ok;
 use aya::maps::{HashMap, RingBuf};
 use aya::programs::{tc, SchedClassifier, TcAttachType, Xdp, XdpFlags};
-use aya::{include_bytes_aligned, Ebpf};
+use aya::Ebpf;
 use aya_log::EbpfLogger;
 use clap::Parser;
 use figment::{
@@ -88,14 +88,10 @@ async fn main() -> Result<(), anyhow::Error> {
     // runtime. This approach is recommended for most real-world use cases. If you would
     // like to specify the eBPF program at runtime rather than at compile-time, you can
     // reach for `Ebpf::load_file` instead.
-    #[cfg(debug_assertions)]
-    let mut bpf = Ebpf::load(include_bytes_aligned!(
-        "../../target/bpfel-unknown-none/debug/sfw"
-    ))?;
-    #[cfg(not(debug_assertions))]
-    let mut bpf = Ebpf::load(include_bytes_aligned!(
-        "../../target/bpfel-unknown-none/release/sfw"
-    ))?;
+    let mut bpf = Ebpf::load(aya::include_bytes_aligned!(concat!(
+        env!("OUT_DIR"),
+        "/sfw"
+    )))?;
     if let Err(e) = EbpfLogger::init(&mut bpf) {
         // This can happen if you remove all log statements from your eBPF program.
         warn!("failed to initialize eBPF logger: {}", e);
@@ -121,16 +117,10 @@ async fn main() -> Result<(), anyhow::Error> {
             } else {
                 let link = program.attach(&opt.iface, XdpFlags::default());
                 if link.is_ok() {
-                    println!("{:?} Mode", XdpFlags::default());
+                    println!("Default Mode (SKB)");
                     link.unwrap()
                 } else {
-                    let link = program.attach(&opt.iface, XdpFlags::SKB_MODE);
-                    if link.is_ok() {
-                        println!("SKB Mode");
-                        link.unwrap()
-                    } else {
-                        return Ok(());
-                    }
+                    return Ok(());
                 }
             }
         }

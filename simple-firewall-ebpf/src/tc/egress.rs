@@ -14,11 +14,11 @@ pub fn handle_udp_egress(
     ctx: TcContext,
     host_addr: Ipv4Addr,
     remote_addr: Ipv4Addr,
-    protocal: IpProto,
+    protocol: IpProto,
 ) -> Result<i32, i32> {
     let udp_hdr: &UdpHdr = unsafe { tc_ptr_at(&ctx, PROTOCAL_OFFSET)? };
-    let host_port = u16::from_be(udp_hdr.source);
-    let remote_port = u16::from_be(udp_hdr.dest);
+    let host_port = udp_hdr.source();
+    let remote_port = udp_hdr.dest();
     if remote_addr.is_broadcast() || remote_port.eq(&123) {
         _ = TEMPORT.insert(&remote_port, &1, 0);
         return Ok(TC_ACT_PIPE);
@@ -28,7 +28,7 @@ pub fn handle_udp_egress(
         host_port,
         remote_addr.to_bits(),
         remote_port,
-        protocal as u8,
+        protocol as u8,
         0,
     );
     let sum_key = connection.into_session();
@@ -82,7 +82,7 @@ pub fn handle_tcp_egress(
     ctx: TcContext,
     host_addr: Ipv4Addr,
     remote_addr: Ipv4Addr,
-    protocal: IpProto,
+    protocol: IpProto,
 ) -> Result<i32, i32> {
     // gather the TCP header
     // let size = unsafe { (*ip_hdr).tot_len };
@@ -96,7 +96,7 @@ pub fn handle_tcp_egress(
         host_port,
         remote_addr.to_bits(),
         remote_port,
-        protocal as u8,
+        protocol as u8,
         tcp_flag,
     );
     let sums_key = connection.into_session();

@@ -1,7 +1,5 @@
 #![no_std]
 #![no_main]
-#![allow(incomplete_features)]
-#![feature(generic_const_exprs)]
 
 mod helper;
 mod tc;
@@ -88,8 +86,8 @@ fn try_simple_firewall(ctx: XdpContext) -> Result<u32, u32> {
             let ipv: &Ipv4Hdr = unsafe { ptr_at(&ctx, EthHdr::LEN)? };
             let remote_addr = ipv.src_addr();
             let host_addr = ipv.dst_addr();
-            let protocal = ipv.proto;
-            // Won't mess with DNS, mulicast and Broadcast
+            let protocol = ipv.proto;
+            // Won't mess with DNS, multicast and Broadcast
             // Let local broadcast and multicast pass
             if host_addr.is_multicast() || ethhdr.dst_addr.eq(&[255,255,255,255,255,255])
                 || matches!(host_addr.octets(), [.., 255])
@@ -103,12 +101,12 @@ fn try_simple_firewall(ctx: XdpContext) -> Result<u32, u32> {
                 );
                 return Ok(xdp_action::XDP_PASS);
             }
-            match protocal {
+            match protocol {
                 IpProto::Tcp => {
-                    handle_tcp_xdp(ctx, host_addr, remote_addr, protocal)
+                    handle_tcp_xdp(ctx, host_addr, remote_addr, protocol)
                 }
                 IpProto::Udp => {
-                    handle_udp_xdp(ctx, host_addr, remote_addr, protocal)
+                    handle_udp_xdp(ctx, host_addr, remote_addr, protocol)
                 }
                 IpProto::Gre => {
                     // let header = ptr_at(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?;
@@ -144,7 +142,7 @@ fn try_tc_egress(ctx: TcContext) -> Result<i32, i32> {
             let ipv4hdr: &Ipv4Hdr = unsafe { tc_ptr_at(&ctx, EthHdr::LEN)? };
             let host_addr = ipv4hdr.src_addr();
             let remote_addr = ipv4hdr.dst_addr();
-            let protocal = ipv4hdr.proto;
+            let protocol = ipv4hdr.proto;
             if host_addr.is_multicast() || eth_hdr.dst_addr.eq(&[255,255,255,255,255,255])
                 || matches!(host_addr.octets(), [.., 255])
                 || (remote_addr.is_multicast() || matches!(remote_addr.octets(), [.., 255]))
@@ -159,13 +157,13 @@ fn try_tc_egress(ctx: TcContext) -> Result<i32, i32> {
             }
             match ipv4hdr.proto {
                 IpProto::Icmp => {
-                    handle_icmp_egress(ctx, host_addr, remote_addr, protocal)
+                    handle_icmp_egress(ctx, host_addr, remote_addr, protocol)
                 }
                 IpProto::Tcp => {
-                    handle_tcp_egress(ctx, host_addr, remote_addr, protocal)
+                    handle_tcp_egress(ctx, host_addr, remote_addr, protocol)
                 }
                 IpProto::Udp => {
-                    handle_udp_egress(ctx, host_addr, remote_addr, protocal)
+                    handle_udp_egress(ctx, host_addr, remote_addr, protocol)
                 }
                 _ => Ok(TC_ACT_PIPE),
             }
@@ -174,7 +172,12 @@ fn try_tc_egress(ctx: TcContext) -> Result<i32, i32> {
     }
 }
 
+#[cfg(not(test))]
 #[panic_handler]
-fn panic(_info: &core::panic::PanicInfo) -> ! {
-    unsafe { core::hint::unreachable_unchecked() }
+pub fn panic(_info: &core::panic::PanicInfo) -> ! {
+    loop {}
 }
+
+#[link_section = "license"]
+#[no_mangle]
+static LICENSE: [u8; 13] = *b"Dual MIT/GPL\0";
